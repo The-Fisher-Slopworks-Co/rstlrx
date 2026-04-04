@@ -3,6 +3,8 @@ mod player;
 mod renderer;
 mod sync;
 
+use std::sync::Arc;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
@@ -77,7 +79,7 @@ async fn main() -> Result<()> {
         }
         None => {
             let auth = SpotifyAuth::load()?;
-            let player: Box<dyn Player> = Box::new(SpotifyPlayer::new(auth));
+            let player: Arc<dyn Player> = Arc::new(SpotifyPlayer::new(auth));
             let provider: Box<dyn LyricsProvider> = Box::new(LrclibProvider::new());
 
             let rx = start_sync(player, provider, SyncConfig::default());
