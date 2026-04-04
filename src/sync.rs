@@ -52,9 +52,12 @@ async fn sync_loop(
 
     let mut current_lyrics: Vec<Line> = Vec::new();
     let mut display_lines: Vec<DisplayLine> = Vec::new();
+    let mut current_track_offset: usize = 0;
     let mut next_lyrics: Vec<Line> = Vec::new();
     let mut next_artist = String::new();
     let mut next_track_name = String::new();
+    let mut next_track_id = String::new();
+    let mut next_track_start: Option<usize> = None;
     let mut current_track_id = String::new();
     let mut index: usize = 0;
     let mut last_state_position: u64 = 0;
@@ -74,41 +77,60 @@ async fn sync_loop(
                         is_playing = state.is_playing;
 
                         if state.track_id != current_track_id {
+                            let is_smooth = !next_track_id.is_empty()
+                                && state.track_id == next_track_id
+                                && next_track_start.is_some();
+
+                            if is_smooth {
+                                // Smooth transition: keep canvas, shift offset
+                                current_track_offset = next_track_start.unwrap();
+                                current_lyrics = std::mem::take(&mut next_lyrics);
+                            } else {
+                                // Unexpected track: rebuild from scratch
+                                current_track_offset = 0;
+                                match provider.fetch(&state.artist, &state.track).await {
+                                    Ok(l) => current_lyrics = l,
+                                    Err(e) => {
+                                        current_lyrics.clear();
+                                        display_lines.clear();
+                                        next_lyrics.clear();
+                                        next_track_id.clear();
+                                        next_track_start = None;
+                                        error = Some(e.to_string());
+                                        current_track_id.clone_from(&state.track_id);
+                                        index = 0;
+                                        continue;
+                                    }
+                                }
+                                display_lines = current_lyrics
+                                    .iter()
+                                    .cloned()
+                                    .map(DisplayLine::Lyric)
+                                    .collect();
+                            }
+
                             current_track_id.clone_from(&state.track_id);
-                            index = 0;
+                            index = current_track_offset;
                             error = None;
 
-                            match provider.fetch(&state.artist, &state.track).await {
-                                Ok(l) => {
-                                    current_lyrics = l;
-
-                                    next_lyrics.clear();
-                                    next_artist.clear();
-                                    next_track_name.clear();
-                                    if let Ok(queue) = player.queue().await {
-                                        if let Some(next) = queue.into_iter().next() {
-                                            next_artist = next.artist;
-                                            next_track_name = next.track;
-                                            if let Ok(nl) = provider.fetch(&next_artist, &next_track_name).await {
-                                                next_lyrics = nl;
-                                            }
-                                        }
+                            // Fetch next track from queue
+                            next_lyrics.clear();
+                            next_track_id.clear();
+                            next_track_start = None;
+                            if let Ok(queue) = player.queue().await {
+                                if let Some(next) = queue.into_iter().next() {
+                                    next_track_id = next.track_id;
+                                    next_artist = next.artist;
+                                    next_track_name = next.track;
+                                    if let Ok(nl) = provider.fetch(&next_artist, &next_track_name).await {
+                                        next_lyrics = nl;
+                                        next_track_start = append_next_track(
+                                            &mut display_lines,
+                                            &next_artist,
+                                            &next_track_name,
+                                            &next_lyrics,
+                                        );
                                     }
-
-                                    display_lines = build_display_lines(
-                                        &current_lyrics,
-                                        if next_lyrics.is_empty() {
-                                            None
-                                        } else {
-                                            Some((&next_artist, &next_track_name, &next_lyrics))
-                                        },
-                                    );
-                                }
-                                Err(e) => {
-                                    current_lyrics.clear();
-                                    display_lines.clear();
-                                    next_lyrics.clear();
-                                    error = Some(e.to_string());
                                 }
                             }
                         }
@@ -120,6 +142,9 @@ async fn sync_loop(
                             current_lyrics.clear();
                             display_lines.clear();
                             next_lyrics.clear();
+                            next_track_id.clear();
+                            next_track_start = None;
+                            current_track_offset = 0;
                             index = 0;
                             error = None;
                         }
@@ -139,7 +164,10 @@ async fn sync_loop(
         };
 
         if !current_lyrics.is_empty() {
-            index = get_index(position, index, &current_lyrics);
+            let local_current = index.saturating_sub(current_track_offset);
+            let clamped = local_current.min(current_lyrics.len().saturating_sub(1));
+            let local_index = get_index(position, clamped, &current_lyrics);
+            index = current_track_offset + local_index;
         }
 
         if tx
@@ -177,6 +205,21 @@ pub fn get_index(position_ms: u64, current_index: usize, lines: &[Line]) -> usiz
         }
     }
     0
+}
+
+pub fn append_next_track(
+    display_lines: &mut Vec<DisplayLine>,
+    artist: &str,
+    track: &str,
+    lyrics: &[Line],
+) -> Option<usize> {
+    if lyrics.is_empty() {
+        return None;
+    }
+    display_lines.push(DisplayLine::Separator(format!("── {artist} - {track} ──")));
+    let start = display_lines.len();
+    display_lines.extend(lyrics.iter().cloned().map(DisplayLine::Lyric));
+    Some(start)
 }
 
 pub fn build_display_lines(
@@ -297,6 +340,45 @@ mod tests {
         let next: Vec<Line> = vec![];
         let result = build_display_lines(&current, Some(("Artist", "Song", &next)));
         assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_append_next_track_basic() {
+        let mut lines: Vec<DisplayLine> = make_lines(&[1000, 2000])
+            .into_iter()
+            .map(DisplayLine::Lyric)
+            .collect();
+        let next = make_lines(&[0, 500]);
+        let start = append_next_track(&mut lines, "Artist", "Song", &next);
+        assert_eq!(start, Some(3)); // 2 lyrics + 1 separator, next starts at 3
+        assert_eq!(lines.len(), 5); // 2 + separator + 2
+        assert!(matches!(&lines[2], DisplayLine::Separator(s) if s.contains("Artist")));
+        assert!(matches!(&lines[3], DisplayLine::Lyric(l) if l.time_ms == 0));
+    }
+
+    #[test]
+    fn test_append_next_track_empty_lyrics() {
+        let mut lines: Vec<DisplayLine> = make_lines(&[1000])
+            .into_iter()
+            .map(DisplayLine::Lyric)
+            .collect();
+        let result = append_next_track(&mut lines, "Artist", "Song", &[]);
+        assert_eq!(result, None);
+        assert_eq!(lines.len(), 1); // unchanged
+    }
+
+    #[test]
+    fn test_append_next_track_preserves_existing() {
+        let mut lines: Vec<DisplayLine> = vec![
+            DisplayLine::Lyric(Line { time_ms: 100, words: "old".into() }),
+            DisplayLine::Separator("── Old ──".into()),
+            DisplayLine::Lyric(Line { time_ms: 200, words: "current".into() }),
+        ];
+        let next = make_lines(&[0]);
+        let start = append_next_track(&mut lines, "New", "Track", &next);
+        assert_eq!(start, Some(4)); // 3 existing + 1 separator, next starts at 4
+        assert_eq!(lines.len(), 5);
+        assert_eq!(lines[0].text(), "old"); // preserved
     }
 
     #[test]
