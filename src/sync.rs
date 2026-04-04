@@ -65,6 +65,7 @@ async fn sync_loop(
     let mut last_state_time = Instant::now();
     let mut is_playing = false;
     let mut error: Option<String> = None;
+    let mut queue_rechecked = false;
 
     let mut timer = tokio::time::interval(config.ui_timer_interval);
 
@@ -112,6 +113,7 @@ async fn sync_loop(
                                 false, // rebuild from scratch
                             )
                             .await;
+                            queue_rechecked = false;
                         }
                     }
                     Ok(None) => {
@@ -144,6 +146,45 @@ async fn sync_loop(
             last_state_position
         };
 
+        // --- Recheck queue 10s before track ends ---
+        if is_playing
+            && !queue_rechecked
+            && current_duration > 10_000
+            && position >= current_duration - 10_000
+        {
+            queue_rechecked = true;
+            if let Ok(queue) = player.queue().await {
+                let new_next_id = queue.first().map(|q| q.track_id.as_str());
+                let old_next_id = if next_track_id.is_empty() { None } else { Some(next_track_id.as_str()) };
+
+                if new_next_id != old_next_id {
+                    // Queue changed — remove old next track from display_lines, load new one
+                    if let Some(start) = next_track_start {
+                        display_lines.truncate(start - 1); // remove separator + old lyrics
+                    }
+                    next_lyrics.clear();
+                    next_track_id.clear();
+                    next_track_start = None;
+
+                    if let Some(next) = queue.into_iter().next() {
+                        next_track_id = next.track_id;
+                        next_artist = next.artist;
+                        next_track_name = next.track;
+                        if let Ok(nl) = provider.fetch(&next_artist, &next_track_name).await {
+                            next_lyrics = nl;
+                            ensure_leading_line(&mut next_lyrics);
+                            next_track_start = append_next_track(
+                                &mut display_lines,
+                                &next_artist,
+                                &next_track_name,
+                                &next_lyrics,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         // --- Auto-transition when position reaches track duration ---
         if is_playing
             && current_duration > 0
@@ -159,6 +200,7 @@ async fn sync_loop(
             last_state_time = Instant::now();
             index = current_track_offset;
             error = None;
+            queue_rechecked = false;
 
             // Fetch next-next track
             next_track_id.clear();
