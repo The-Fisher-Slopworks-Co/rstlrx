@@ -1,4 +1,127 @@
-use crate::lyrics::Line;
+use std::time::{Duration, Instant};
+use tokio::sync::mpsc;
+
+use crate::lyrics::{Line, LyricsProvider};
+use crate::player::Player;
+use crate::renderer::Update;
+
+pub struct SyncConfig {
+    pub player_poll_interval: Duration,
+    pub ui_timer_interval: Duration,
+}
+
+impl Default for SyncConfig {
+    fn default() -> Self {
+        Self {
+            player_poll_interval: Duration::from_millis(2000),
+            ui_timer_interval: Duration::from_millis(200),
+        }
+    }
+}
+
+pub fn start_sync(
+    player: Box<dyn Player>,
+    provider: Box<dyn LyricsProvider>,
+    config: SyncConfig,
+) -> mpsc::Receiver<Update> {
+    let (tx, rx) = mpsc::channel(16);
+    tokio::spawn(sync_loop(player, provider, config, tx));
+    rx
+}
+
+async fn sync_loop(
+    player: Box<dyn Player>,
+    provider: Box<dyn LyricsProvider>,
+    config: SyncConfig,
+    tx: mpsc::Sender<Update>,
+) {
+    let (player_tx, mut player_rx) = mpsc::channel(1);
+
+    let poll_interval = config.player_poll_interval;
+    tokio::spawn(async move {
+        loop {
+            let result = player.state().await;
+            if player_tx.send(result).await.is_err() {
+                break;
+            }
+            tokio::time::sleep(poll_interval).await;
+        }
+    });
+
+    let mut lines: Vec<Line> = Vec::new();
+    let mut current_track_id = String::new();
+    let mut index: usize = 0;
+    let mut last_state_position: u64 = 0;
+    let mut last_state_time = Instant::now();
+    let mut is_playing = false;
+    let mut error: Option<String> = None;
+
+    let mut timer = tokio::time::interval(config.ui_timer_interval);
+
+    loop {
+        tokio::select! {
+            Some(result) = player_rx.recv() => {
+                match result {
+                    Ok(Some(state)) => {
+                        last_state_position = state.position_ms;
+                        last_state_time = Instant::now();
+                        is_playing = state.is_playing;
+
+                        if state.track_id != current_track_id {
+                            current_track_id.clone_from(&state.track_id);
+                            index = 0;
+                            error = None;
+
+                            match provider.fetch(&state.artist, &state.track).await {
+                                Ok(l) => lines = l,
+                                Err(e) => {
+                                    lines.clear();
+                                    error = Some(e.to_string());
+                                }
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        is_playing = false;
+                        if !current_track_id.is_empty() {
+                            current_track_id.clear();
+                            lines.clear();
+                            index = 0;
+                            error = None;
+                        }
+                    }
+                    Err(e) => {
+                        error = Some(e.to_string());
+                    }
+                }
+            }
+            _ = timer.tick() => {}
+        }
+
+        let position = if is_playing {
+            last_state_position + last_state_time.elapsed().as_millis() as u64
+        } else {
+            last_state_position
+        };
+
+        if !lines.is_empty() {
+            index = get_index(position, index, &lines);
+        }
+
+        if tx
+            .send(Update {
+                lines: lines.clone(),
+                index,
+                is_playing,
+                error: error.clone(),
+            })
+            .await
+            .is_err()
+        {
+            break;
+        }
+    }
+}
 
 pub fn get_index(position_ms: u64, current_index: usize, lines: &[Line]) -> usize {
     if lines.len() <= 1 {
