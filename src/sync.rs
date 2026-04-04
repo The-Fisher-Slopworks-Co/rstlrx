@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
-use crate::lyrics::{Line, LyricsProvider};
+use crate::lyrics::{ensure_leading_line, Line, LyricsProvider};
 use crate::player::Player;
 use crate::renderer::{DisplayLine, Update};
 
@@ -89,7 +89,10 @@ async fn sync_loop(
                                 // Unexpected track: rebuild from scratch
                                 current_track_offset = 0;
                                 match provider.fetch(&state.artist, &state.track).await {
-                                    Ok(l) => current_lyrics = l,
+                                    Ok(l) => {
+                                        current_lyrics = l;
+                                        ensure_leading_line(&mut current_lyrics);
+                                    }
                                     Err(e) => {
                                         current_lyrics.clear();
                                         display_lines.clear();
@@ -124,6 +127,7 @@ async fn sync_loop(
                                     next_track_name = next.track;
                                     if let Ok(nl) = provider.fetch(&next_artist, &next_track_name).await {
                                         next_lyrics = nl;
+                                        ensure_leading_line(&mut next_lyrics);
                                         next_track_start = append_next_track(
                                             &mut display_lines,
                                             &next_artist,
