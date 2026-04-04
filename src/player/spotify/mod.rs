@@ -91,8 +91,54 @@ impl Player for SpotifyPlayer {
     }
 
     async fn queue(&self) -> Result<Vec<crate::player::QueueItem>> {
-        Ok(vec![])
+        let token = {
+            let mut auth = self.auth.lock().await;
+            auth.get_token().await?.to_string()
+        };
+
+        let resp = self
+            .client
+            .get("https://api.spotify.com/v1/me/player/queue")
+            .bearer_auth(&token)
+            .send()
+            .await?;
+
+        if resp.status() == reqwest::StatusCode::NO_CONTENT {
+            return Ok(vec![]);
+        }
+
+        if !resp.status().is_success() {
+            bail!("spotify queue: {}", resp.status());
+        }
+
+        let data: SpotifyQueueResponse = resp.json().await?;
+        Ok(parse_queue_response(data))
     }
+}
+
+#[derive(Deserialize)]
+struct SpotifyQueueResponse {
+    queue: Vec<SpotifyItem>,
+}
+
+fn parse_queue_response(data: SpotifyQueueResponse) -> Vec<crate::player::QueueItem> {
+    data.queue
+        .into_iter()
+        .take(1)
+        .map(|item| {
+            let artist = item
+                .artists
+                .iter()
+                .map(|a| a.name.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+            crate::player::QueueItem {
+                track_id: item.id,
+                artist,
+                track: item.name,
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -140,5 +186,53 @@ mod tests {
         let json = r#"{"is_playing": false, "progress_ms": null, "item": null}"#;
         let resp: SpotifyResponse = serde_json::from_str(json).unwrap();
         assert!(parse_response(resp).is_none());
+    }
+
+    #[test]
+    fn test_parse_queue_response_with_items() {
+        let json = r#"{
+            "currently_playing": null,
+            "queue": [
+                {
+                    "id": "next1",
+                    "name": "Next Song",
+                    "artists": [{"name": "Next Artist"}]
+                },
+                {
+                    "id": "next2",
+                    "name": "After That",
+                    "artists": [{"name": "Other Artist"}]
+                }
+            ]
+        }"#;
+        let resp: SpotifyQueueResponse = serde_json::from_str(json).unwrap();
+        let items = parse_queue_response(resp);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].track_id, "next1");
+        assert_eq!(items[0].artist, "Next Artist");
+        assert_eq!(items[0].track, "Next Song");
+    }
+
+    #[test]
+    fn test_parse_queue_response_empty() {
+        let json = r#"{"currently_playing": null, "queue": []}"#;
+        let resp: SpotifyQueueResponse = serde_json::from_str(json).unwrap();
+        let items = parse_queue_response(resp);
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn test_parse_queue_response_multiple_artists() {
+        let json = r#"{
+            "currently_playing": null,
+            "queue": [{
+                "id": "q1",
+                "name": "Collab",
+                "artists": [{"name": "A"}, {"name": "B"}]
+            }]
+        }"#;
+        let resp: SpotifyQueueResponse = serde_json::from_str(json).unwrap();
+        let items = parse_queue_response(resp);
+        assert_eq!(items[0].artist, "A B");
     }
 }
