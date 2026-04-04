@@ -20,6 +20,8 @@ struct SpotifyResponse {
 struct SpotifyItem {
     id: String,
     name: String,
+    #[serde(default)]
+    duration_ms: u64,
     artists: Vec<SpotifyArtist>,
 }
 
@@ -42,6 +44,7 @@ fn parse_response(data: SpotifyResponse) -> Option<State> {
         artist,
         track: item.name,
         position_ms: data.progress_ms.unwrap_or(0),
+        duration_ms: item.duration_ms,
         is_playing: data.is_playing,
     })
 }
@@ -153,6 +156,7 @@ mod tests {
             "item": {
                 "id": "abc123",
                 "name": "The Night We Met",
+                "duration_ms": 207000,
                 "artists": [{"name": "Lord Huron"}]
             }
         }"#;
@@ -162,6 +166,7 @@ mod tests {
         assert_eq!(state.artist, "Lord Huron");
         assert_eq!(state.track, "The Night We Met");
         assert_eq!(state.position_ms, 42000);
+        assert_eq!(state.duration_ms, 207000);
         assert!(state.is_playing);
     }
 

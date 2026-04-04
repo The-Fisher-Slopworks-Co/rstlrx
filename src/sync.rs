@@ -53,6 +53,7 @@ async fn sync_loop(
     let mut current_lyrics: Vec<Line> = Vec::new();
     let mut display_lines: Vec<DisplayLine> = Vec::new();
     let mut current_track_offset: usize = 0;
+    let mut current_duration: u64 = 0;
     let mut next_lyrics: Vec<Line> = Vec::new();
     let mut next_artist = String::new();
     let mut next_track_name = String::new();
@@ -68,75 +69,49 @@ async fn sync_loop(
     let mut timer = tokio::time::interval(config.ui_timer_interval);
 
     loop {
+        // --- Handle events ---
         tokio::select! {
             Some(result) = player_rx.recv() => {
                 match result {
                     Ok(Some(state)) => {
-                        last_state_position = state.position_ms;
-                        last_state_time = Instant::now();
                         is_playing = state.is_playing;
 
-                        if state.track_id != current_track_id {
-                            let is_smooth = !next_track_id.is_empty()
-                                && state.track_id == next_track_id
-                                && next_track_start.is_some();
+                        if state.track_id == current_track_id {
+                            // Same track: just correct position
+                            last_state_position = state.position_ms;
+                            last_state_time = Instant::now();
+                            current_duration = state.duration_ms;
+                        } else if state.track_id == next_track_id && next_track_start.is_some() {
+                            // Poll confirms our auto-transition — just sync position
+                            last_state_position = state.position_ms;
+                            last_state_time = Instant::now();
+                            current_duration = state.duration_ms;
+                        } else if current_track_id.is_empty() || state.track_id != next_track_id {
+                            // First track or unexpected track: full rebuild
+                            current_duration = state.duration_ms;
+                            last_state_position = state.position_ms;
+                            last_state_time = Instant::now();
 
-                            if is_smooth {
-                                // Smooth transition: keep canvas, shift offset
-                                current_track_offset = next_track_start.unwrap();
-                                current_lyrics = std::mem::take(&mut next_lyrics);
-                            } else {
-                                // Unexpected track: rebuild from scratch
-                                current_track_offset = 0;
-                                match provider.fetch(&state.artist, &state.track).await {
-                                    Ok(l) => {
-                                        current_lyrics = l;
-                                        ensure_leading_line(&mut current_lyrics);
-                                    }
-                                    Err(e) => {
-                                        current_lyrics.clear();
-                                        display_lines.clear();
-                                        next_lyrics.clear();
-                                        next_track_id.clear();
-                                        next_track_start = None;
-                                        error = Some(e.to_string());
-                                        current_track_id.clone_from(&state.track_id);
-                                        index = 0;
-                                        continue;
-                                    }
-                                }
-                                display_lines = current_lyrics
-                                    .iter()
-                                    .cloned()
-                                    .map(DisplayLine::Lyric)
-                                    .collect();
-                            }
-
-                            current_track_id.clone_from(&state.track_id);
-                            index = current_track_offset;
-                            error = None;
-
-                            // Fetch next track from queue
-                            next_lyrics.clear();
-                            next_track_id.clear();
-                            next_track_start = None;
-                            if let Ok(queue) = player.queue().await {
-                                if let Some(next) = queue.into_iter().next() {
-                                    next_track_id = next.track_id;
-                                    next_artist = next.artist;
-                                    next_track_name = next.track;
-                                    if let Ok(nl) = provider.fetch(&next_artist, &next_track_name).await {
-                                        next_lyrics = nl;
-                                        ensure_leading_line(&mut next_lyrics);
-                                        next_track_start = append_next_track(
-                                            &mut display_lines,
-                                            &next_artist,
-                                            &next_track_name,
-                                            &next_lyrics,
-                                        );
-                                    }
-                                }
-                            }
+                            transition_to_new_track(
+                                &state.track_id,
+                                &state.artist,
+                                &state.track,
+                                &*provider,
+                                &*player,
+                                &mut current_track_id,
+                                &mut current_lyrics,
+                                &mut display_lines,
+                                &mut current_track_offset,
+                                &mut index,
+                                &mut error,
+                                &mut next_lyrics,
+                                &mut next_track_id,
+                                &mut next_artist,
+                                &mut next_track_name,
+                                &mut next_track_start,
+                                false, // rebuild from scratch
+                            )
+                            .await;
                         }
                     }
                     Ok(None) => {
@@ -149,24 +124,65 @@ async fn sync_loop(
                             next_track_id.clear();
                             next_track_start = None;
                             current_track_offset = 0;
+                            current_duration = 0;
                             index = 0;
                             error = None;
                         }
                     }
-                    Err(e) => {
-                        error = Some(e.to_string());
+                    Err(_) => {
+                        // Ignore poll errors — keep simulating
                     }
                 }
             }
             _ = timer.tick() => {}
         }
 
+        // --- Simulate position ---
         let position = if is_playing {
             last_state_position + last_state_time.elapsed().as_millis() as u64
         } else {
             last_state_position
         };
 
+        // --- Auto-transition when position reaches track duration ---
+        if is_playing
+            && current_duration > 0
+            && position >= current_duration
+            && next_track_start.is_some()
+        {
+            let overflow = position - current_duration;
+            current_track_offset = next_track_start.unwrap();
+            current_lyrics = std::mem::take(&mut next_lyrics);
+            current_track_id.clone_from(&next_track_id);
+            current_duration = 0; // unknown until next poll corrects it
+            last_state_position = overflow;
+            last_state_time = Instant::now();
+            index = current_track_offset;
+            error = None;
+
+            // Fetch next-next track
+            next_track_id.clear();
+            next_track_start = None;
+            if let Ok(queue) = player.queue().await {
+                if let Some(next) = queue.into_iter().next() {
+                    next_track_id = next.track_id;
+                    next_artist = next.artist;
+                    next_track_name = next.track;
+                    if let Ok(nl) = provider.fetch(&next_artist, &next_track_name).await {
+                        next_lyrics = nl;
+                        ensure_leading_line(&mut next_lyrics);
+                        next_track_start = append_next_track(
+                            &mut display_lines,
+                            &next_artist,
+                            &next_track_name,
+                            &next_lyrics,
+                        );
+                    }
+                }
+            }
+        }
+
+        // --- Calculate current line index ---
         if !current_lyrics.is_empty() {
             let local_current = index.saturating_sub(current_track_offset);
             let clamped = local_current.min(current_lyrics.len().saturating_sub(1));
@@ -185,6 +201,75 @@ async fn sync_loop(
             .is_err()
         {
             break;
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn transition_to_new_track(
+    track_id: &str,
+    artist: &str,
+    track: &str,
+    provider: &dyn LyricsProvider,
+    player: &dyn Player,
+    current_track_id: &mut String,
+    current_lyrics: &mut Vec<Line>,
+    display_lines: &mut Vec<DisplayLine>,
+    current_track_offset: &mut usize,
+    index: &mut usize,
+    error: &mut Option<String>,
+    next_lyrics: &mut Vec<Line>,
+    next_track_id: &mut String,
+    next_artist: &mut String,
+    next_track_name: &mut String,
+    next_track_start: &mut Option<usize>,
+    smooth: bool,
+) {
+    if smooth {
+        *current_track_offset = next_track_start.unwrap();
+        *current_lyrics = std::mem::take(next_lyrics);
+    } else {
+        *current_track_offset = 0;
+        match provider.fetch(artist, track).await {
+            Ok(l) => {
+                *current_lyrics = l;
+                ensure_leading_line(current_lyrics);
+            }
+            Err(e) => {
+                current_lyrics.clear();
+                display_lines.clear();
+                next_lyrics.clear();
+                next_track_id.clear();
+                *next_track_start = None;
+                *error = Some(e.to_string());
+                current_track_id.clone_from(&track_id.to_string());
+                *index = 0;
+                return;
+            }
+        }
+        *display_lines = current_lyrics.iter().cloned().map(DisplayLine::Lyric).collect();
+    }
+
+    current_track_id.clone_from(&track_id.to_string());
+    *index = *current_track_offset;
+    *error = None;
+
+    // Fetch next track from queue
+    next_lyrics.clear();
+    next_track_id.clear();
+    *next_track_start = None;
+    if let Ok(queue) = player.queue().await {
+        if let Some(next) = queue.into_iter().next() {
+            *next_track_id = next.track_id;
+            *next_artist = next.artist;
+            *next_track_name = next.track;
+            if let Ok(nl) = provider.fetch(next_artist, next_track_name).await {
+                *next_lyrics = nl;
+                ensure_leading_line(next_lyrics);
+                *next_track_start = append_next_track(
+                    display_lines, next_artist, next_track_name, next_lyrics,
+                );
+            }
         }
     }
 }
@@ -224,22 +309,6 @@ pub fn append_next_track(
     let start = display_lines.len();
     display_lines.extend(lyrics.iter().cloned().map(DisplayLine::Lyric));
     Some(start)
-}
-
-pub fn build_display_lines(
-    current_lyrics: &[Line],
-    next_track: Option<(&str, &str, &[Line])>,
-) -> Vec<DisplayLine> {
-    let mut result: Vec<DisplayLine> = current_lyrics.iter().cloned().map(DisplayLine::Lyric).collect();
-
-    if let Some((artist, track, next_lyrics)) = next_track {
-        if !next_lyrics.is_empty() {
-            result.push(DisplayLine::Separator(format!("── {artist} - {track} ──")));
-            result.extend(next_lyrics.iter().cloned().map(DisplayLine::Lyric));
-        }
-    }
-
-    result
 }
 
 #[cfg(test)]
@@ -317,36 +386,6 @@ mod tests {
     }
 
     #[test]
-    fn test_build_display_lines_no_next_track() {
-        let lyrics = make_lines(&[1000, 2000, 3000]);
-        let result = build_display_lines(&lyrics, None);
-        assert_eq!(result.len(), 3);
-        assert!(matches!(&result[0], DisplayLine::Lyric(l) if l.time_ms == 1000));
-        assert!(matches!(&result[2], DisplayLine::Lyric(l) if l.time_ms == 3000));
-    }
-
-    #[test]
-    fn test_build_display_lines_with_next_track() {
-        let current = make_lines(&[1000, 2000]);
-        let next = make_lines(&[0, 1000]);
-        let result = build_display_lines(&current, Some(("Artist", "Song", &next)));
-        assert_eq!(result.len(), 5);
-        assert!(matches!(&result[0], DisplayLine::Lyric(_)));
-        assert!(matches!(&result[1], DisplayLine::Lyric(_)));
-        assert!(matches!(&result[2], DisplayLine::Separator(s) if s.contains("Artist") && s.contains("Song")));
-        assert!(matches!(&result[3], DisplayLine::Lyric(_)));
-        assert!(matches!(&result[4], DisplayLine::Lyric(_)));
-    }
-
-    #[test]
-    fn test_build_display_lines_next_track_empty_lyrics() {
-        let current = make_lines(&[1000, 2000]);
-        let next: Vec<Line> = vec![];
-        let result = build_display_lines(&current, Some(("Artist", "Song", &next)));
-        assert_eq!(result.len(), 2);
-    }
-
-    #[test]
     fn test_append_next_track_basic() {
         let mut lines: Vec<DisplayLine> = make_lines(&[1000, 2000])
             .into_iter()
@@ -386,11 +425,14 @@ mod tests {
     }
 
     #[test]
-    fn test_build_display_lines_separator_format() {
-        let current = make_lines(&[1000]);
+    fn test_append_next_track_separator_format() {
+        let mut lines: Vec<DisplayLine> = make_lines(&[1000])
+            .into_iter()
+            .map(DisplayLine::Lyric)
+            .collect();
         let next = make_lines(&[0]);
-        let result = build_display_lines(&current, Some(("Lord Huron", "The Night We Met", &next)));
-        if let DisplayLine::Separator(s) = &result[1] {
+        append_next_track(&mut lines, "Lord Huron", "The Night We Met", &next);
+        if let DisplayLine::Separator(s) = &lines[1] {
             assert_eq!(s, "── Lord Huron - The Night We Met ──");
         } else {
             panic!("Expected Separator at index 1");

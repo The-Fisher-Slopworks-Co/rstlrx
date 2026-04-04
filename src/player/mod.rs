@@ -9,6 +9,7 @@ pub struct State {
     pub artist: String,
     pub track: String,
     pub position_ms: u64,
+    pub duration_ms: u64,
     pub is_playing: bool,
 }
 
