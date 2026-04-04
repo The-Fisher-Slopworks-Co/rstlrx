@@ -1,4 +1,18 @@
+use anyhow::{bail, Result};
+use async_trait::async_trait;
+use reqwest::Client;
+use serde::Deserialize;
+
 use crate::lyrics::Line;
+use crate::lyrics::LyricsProvider;
+
+#[derive(Deserialize)]
+struct LrclibResponse {
+    #[serde(rename = "syncedLyrics")]
+    synced_lyrics: Option<String>,
+    #[serde(rename = "plainLyrics")]
+    plain_lyrics: Option<String>,
+}
 
 pub fn parse_lrc(input: &str) -> Vec<Line> {
     input.lines().filter_map(parse_lrc_line).collect()
@@ -32,6 +46,51 @@ fn parse_lrc_line(line: &str) -> Option<Line> {
         time_ms: minutes * 60_000 + seconds * 1_000 + ms,
         words,
     })
+}
+
+pub struct LrclibProvider {
+    client: Client,
+}
+
+impl LrclibProvider {
+    pub fn new() -> Self {
+        Self {
+            client: Client::builder()
+                .user_agent("rstlrx v0.1.0 (https://github.com/txssu/rstlrx)")
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .expect("failed to create HTTP client"),
+        }
+    }
+}
+
+#[async_trait]
+impl LyricsProvider for LrclibProvider {
+    async fn fetch(&self, artist: &str, track: &str) -> Result<Vec<Line>> {
+        let resp = self
+            .client
+            .get("https://lrclib.net/api/get")
+            .query(&[("artist_name", artist), ("track_name", track)])
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            bail!("lrclib: {}", resp.status());
+        }
+
+        let data: LrclibResponse = resp.json().await?;
+
+        if let Some(synced) = data.synced_lyrics {
+            Ok(parse_lrc(&synced))
+        } else if let Some(plain) = data.plain_lyrics {
+            Ok(plain
+                .lines()
+                .map(|l| Line { time_ms: 0, words: l.to_string() })
+                .collect())
+        } else {
+            bail!("lrclib: no lyrics found")
+        }
+    }
 }
 
 #[cfg(test)]
@@ -101,5 +160,24 @@ mod tests {
         let input = "[00:01.00] Valid\nsome garbage\n[00:05.00] Also valid";
         let result = parse_lrc(input);
         assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_deserialize_lrclib_response_synced() {
+        let json = r#"{"syncedLyrics": "[00:01.00] Hello\n[00:05.00] World", "plainLyrics": "Hello\nWorld"}"#;
+        let resp: LrclibResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.synced_lyrics.is_some());
+        let lines = parse_lrc(&resp.synced_lyrics.unwrap());
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].words, "Hello");
+        assert_eq!(lines[1].words, "World");
+    }
+
+    #[test]
+    fn test_deserialize_lrclib_response_plain_only() {
+        let json = r#"{"syncedLyrics": null, "plainLyrics": "Hello\nWorld"}"#;
+        let resp: LrclibResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.synced_lyrics.is_none());
+        assert_eq!(resp.plain_lyrics.unwrap(), "Hello\nWorld");
     }
 }
