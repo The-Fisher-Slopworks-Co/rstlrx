@@ -3,7 +3,7 @@ use tokio::sync::mpsc;
 
 use crate::lyrics::{Line, LyricsProvider};
 use crate::player::Player;
-use crate::renderer::Update;
+use crate::renderer::{DisplayLine, Update};
 
 pub struct SyncConfig {
     pub player_poll_interval: Duration,
@@ -48,7 +48,8 @@ async fn sync_loop(
         }
     });
 
-    let mut lines: Vec<Line> = Vec::new();
+    let mut current_lyrics: Vec<Line> = Vec::new();
+    let mut display_lines: Vec<DisplayLine> = Vec::new();
     let mut current_track_id = String::new();
     let mut index: usize = 0;
     let mut last_state_position: u64 = 0;
@@ -73,9 +74,13 @@ async fn sync_loop(
                             error = None;
 
                             match provider.fetch(&state.artist, &state.track).await {
-                                Ok(l) => lines = l,
+                                Ok(l) => {
+                                    current_lyrics = l;
+                                    display_lines = current_lyrics.iter().cloned().map(DisplayLine::Lyric).collect();
+                                }
                                 Err(e) => {
-                                    lines.clear();
+                                    current_lyrics.clear();
+                                    display_lines.clear();
                                     error = Some(e.to_string());
                                 }
                             }
@@ -85,7 +90,8 @@ async fn sync_loop(
                         is_playing = false;
                         if !current_track_id.is_empty() {
                             current_track_id.clear();
-                            lines.clear();
+                            current_lyrics.clear();
+                            display_lines.clear();
                             index = 0;
                             error = None;
                         }
@@ -104,13 +110,13 @@ async fn sync_loop(
             last_state_position
         };
 
-        if !lines.is_empty() {
-            index = get_index(position, index, &lines);
+        if !current_lyrics.is_empty() {
+            index = get_index(position, index, &current_lyrics);
         }
 
         if tx
             .send(Update {
-                lines: lines.clone(),
+                lines: display_lines.clone(),
                 index,
                 is_playing,
                 error: error.clone(),

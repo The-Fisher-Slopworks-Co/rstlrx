@@ -74,7 +74,7 @@ impl TuiRenderer {
             let idx = update.index as isize - i as isize - 1;
             if idx >= 0 && (idx as usize) < update.lines.len() {
                 output.push(ratatui::text::Line::styled(
-                    update.lines[idx as usize].words.clone(),
+                    update.lines[idx as usize].text().to_string(),
                     self.style_before,
                 ));
             } else {
@@ -82,16 +82,24 @@ impl TuiRenderer {
             }
         }
 
-        // Current line with markers
-        let current_text = format!("> {} <", &update.lines[update.index].words);
-        output.push(ratatui::text::Line::styled(current_text, self.style_current));
+        // Current line with markers (only for Lyric, not Separator)
+        let current = &update.lines[update.index];
+        if current.is_separator() {
+            output.push(ratatui::text::Line::styled(
+                current.text().to_string(),
+                self.style_current,
+            ));
+        } else {
+            let current_text = format!("> {} <", current.text());
+            output.push(ratatui::text::Line::styled(current_text, self.style_current));
+        }
 
         // Lines after current
         for i in 1..=after_count {
             let idx = update.index + i;
             if idx < update.lines.len() {
                 output.push(ratatui::text::Line::styled(
-                    update.lines[idx].words.clone(),
+                    update.lines[idx].text().to_string(),
                     self.style_after,
                 ));
             } else {

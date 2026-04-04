@@ -5,8 +5,27 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 #[derive(Debug, Clone)]
+pub enum DisplayLine {
+    Lyric(Line),
+    Separator(String),
+}
+
+impl DisplayLine {
+    pub fn text(&self) -> &str {
+        match self {
+            DisplayLine::Lyric(line) => &line.words,
+            DisplayLine::Separator(text) => text,
+        }
+    }
+
+    pub fn is_separator(&self) -> bool {
+        matches!(self, DisplayLine::Separator(_))
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Update {
-    pub lines: Vec<Line>,
+    pub lines: Vec<DisplayLine>,
     pub index: usize,
     pub is_playing: bool,
     pub error: Option<String>,
