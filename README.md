@@ -79,7 +79,7 @@ rstlrx --ignore-errors
 
 ## How it works
 
-rstlrx polls your Spotify playback every 2 seconds and interpolates the position between polls (200ms ticks). When the track changes, it fetches synced lyrics from [lrclib.net](https://lrclib.net).
+rstlrx polls your Spotify playback every 2 seconds and interpolates the position between polls (200ms ticks). When the track changes, it fetches synced lyrics from [lrclib.net](https://lrclib.net). If there's a next track in your Spotify queue, rstlrx fetches its lyrics too and stitches them together with a separator — so you get one continuous scroll of text across songs.
 
 Internally there are three trait abstractions: `Player` (reports what's playing), `LyricsProvider` (fetches lyrics), and `Renderer` (draws them). Right now the only implementations are Spotify, lrclib.net, and the terminal UI, but adding a new source or output is just a trait impl and a few lines in `main.rs`.
 
