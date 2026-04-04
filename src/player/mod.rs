@@ -12,7 +12,15 @@ pub struct State {
     pub is_playing: bool,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct QueueItem {
+    pub track_id: String,
+    pub artist: String,
+    pub track: String,
+}
+
 #[async_trait]
 pub trait Player: Send + Sync {
     async fn state(&self) -> Result<Option<State>>;
+    async fn queue(&self) -> Result<Vec<QueueItem>>;
 }

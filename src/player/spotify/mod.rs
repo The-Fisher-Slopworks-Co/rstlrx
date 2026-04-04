@@ -89,6 +89,10 @@ impl Player for SpotifyPlayer {
         let data: SpotifyResponse = resp.json().await?;
         Ok(parse_response(data))
     }
+
+    async fn queue(&self) -> Result<Vec<crate::player::QueueItem>> {
+        Ok(vec![])
+    }
 }
 
 #[cfg(test)]
