@@ -2,15 +2,7 @@
 
 🚀🚀🚀 A blazingly fast, memory-safe, lightweight Spotify lyrics viewer for your terminal. 🚀🚀🚀
 
-```
-        I've been searching for a trail to follow again
-        Take me back to the night we met
-
-        I don't know what I'm supposed to do
-
-        Haunted by the ghost of you
-        Take me back to the night we met
-```
+<img src="./demo.gif" width="450"/>
 
 ## What's new compared to sptlrx
 
