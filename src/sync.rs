@@ -186,14 +186,22 @@ async fn sync_loop(
         }
 
         // --- Auto-transition when position reaches track duration ---
-        if config.merge_queue
-            && is_playing
+        if is_playing
             && current_duration > 0
             && position >= current_duration
-            && next_track_start.is_some()
+            && !next_track_id.is_empty()
         {
             let overflow = position - current_duration;
-            current_track_offset = next_track_start.unwrap();
+
+            if config.merge_queue && next_track_start.is_some() {
+                // Smooth: shift offset within continuous canvas
+                current_track_offset = next_track_start.unwrap();
+            } else {
+                // Rebuild display from pre-fetched lyrics
+                current_track_offset = 0;
+                display_lines = next_lyrics.iter().cloned().map(DisplayLine::Lyric).collect();
+            }
+
             current_lyrics = std::mem::take(&mut next_lyrics);
             current_track_id.clone_from(&next_track_id);
             current_duration = 0; // unknown until next poll corrects it
@@ -212,12 +220,14 @@ async fn sync_loop(
                     if let Ok(nl) = provider.fetch(&next_artist, &next_track_name).await {
                         next_lyrics = nl;
                         ensure_leading_line(&mut next_lyrics);
-                        next_track_start = append_next_track(
-                            &mut display_lines,
-                            &next_artist,
-                            &next_track_name,
-                            &next_lyrics,
-                        );
+                        if config.merge_queue {
+                            next_track_start = append_next_track(
+                                &mut display_lines,
+                                &next_artist,
+                                &next_track_name,
+                                &next_lyrics,
+                            );
+                        }
                     }
                 }
             }
@@ -293,6 +303,11 @@ async fn transition_to_new_track(
     if smooth {
         *current_track_offset = next_track_start.unwrap();
         *current_lyrics = std::mem::take(next_lyrics);
+    } else if track_id == next_track_id.as_str() && !next_lyrics.is_empty() {
+        // Pre-fetched lyrics match — use them without network request
+        *current_track_offset = 0;
+        *current_lyrics = std::mem::take(next_lyrics);
+        *display_lines = current_lyrics.iter().cloned().map(DisplayLine::Lyric).collect();
     } else {
         *current_track_offset = 0;
         match provider.fetch(artist, track).await {
@@ -319,11 +334,11 @@ async fn transition_to_new_track(
     *index = *current_track_offset;
     *error = None;
 
-    // Fetch next track from queue
+    // Fetch next track from queue (always, for instant transition)
     next_lyrics.clear();
     next_track_id.clear();
     *next_track_start = None;
-    if merge_queue && let Ok(queue) = player.queue().await {
+    if let Ok(queue) = player.queue().await {
         if let Some(next) = queue.into_iter().next() {
             *next_track_id = next.track_id;
             *next_artist = next.artist;
@@ -331,9 +346,11 @@ async fn transition_to_new_track(
             if let Ok(nl) = provider.fetch(next_artist, next_track_name).await {
                 *next_lyrics = nl;
                 ensure_leading_line(next_lyrics);
-                *next_track_start = append_next_track(
-                    display_lines, next_artist, next_track_name, next_lyrics,
-                );
+                if merge_queue {
+                    *next_track_start = append_next_track(
+                        display_lines, next_artist, next_track_name, next_lyrics,
+                    );
+                }
             }
         }
     }
