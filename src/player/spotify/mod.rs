@@ -30,14 +30,17 @@ struct SpotifyArtist {
     name: String,
 }
 
-fn parse_response(data: SpotifyResponse) -> Option<State> {
-    let item = data.item?;
-    let artist = item
-        .artists
+fn join_artists(artists: &[SpotifyArtist]) -> String {
+    artists
         .iter()
         .map(|a| a.name.as_str())
         .collect::<Vec<_>>()
-        .join(" ");
+        .join(" ")
+}
+
+fn parse_response(data: SpotifyResponse) -> Option<State> {
+    let item = data.item?;
+    let artist = join_artists(&item.artists);
 
     Some(State {
         track_id: item.id,
@@ -129,12 +132,7 @@ fn parse_queue_response(data: SpotifyQueueResponse) -> Vec<crate::player::QueueI
         .into_iter()
         .take(1)
         .map(|item| {
-            let artist = item
-                .artists
-                .iter()
-                .map(|a| a.name.as_str())
-                .collect::<Vec<_>>()
-                .join(" ");
+            let artist = join_artists(&item.artists);
             crate::player::QueueItem {
                 track_id: item.id,
                 artist,

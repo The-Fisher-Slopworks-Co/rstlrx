@@ -18,16 +18,12 @@ impl DisplayLine {
         }
     }
 
-    pub fn is_separator(&self) -> bool {
-        matches!(self, DisplayLine::Separator(_))
-    }
 }
 
 #[derive(Debug, Clone)]
 pub struct Update {
     pub lines: Vec<DisplayLine>,
     pub index: usize,
-    pub is_playing: bool,
     pub error: Option<String>,
 }
 

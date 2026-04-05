@@ -19,40 +19,7 @@ pub fn parse_color(input: &str) -> Option<Color> {
     if input.is_empty() {
         return None;
     }
-
-    if let Some(hex) = input.strip_prefix('#') {
-        if hex.len() == 6 {
-            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-            return Some(Color::Rgb(r, g, b));
-        }
-        return None;
-    }
-
-    if let Ok(index) = input.parse::<u8>() {
-        return Some(Color::Indexed(index));
-    }
-
-    match input.to_lowercase().as_str() {
-        "black" => Some(Color::Black),
-        "red" => Some(Color::Red),
-        "green" => Some(Color::Green),
-        "yellow" => Some(Color::Yellow),
-        "blue" => Some(Color::Blue),
-        "magenta" => Some(Color::Magenta),
-        "cyan" => Some(Color::Cyan),
-        "gray" | "grey" => Some(Color::Gray),
-        "darkgray" | "dark_gray" => Some(Color::DarkGray),
-        "lightred" | "light_red" => Some(Color::LightRed),
-        "lightgreen" | "light_green" => Some(Color::LightGreen),
-        "lightyellow" | "light_yellow" => Some(Color::LightYellow),
-        "lightblue" | "light_blue" => Some(Color::LightBlue),
-        "lightmagenta" | "light_magenta" => Some(Color::LightMagenta),
-        "lightcyan" | "light_cyan" => Some(Color::LightCyan),
-        "white" => Some(Color::White),
-        _ => None,
-    }
+    input.parse().ok()
 }
 
 pub fn build_style(style_str: &str, color: Option<&str>) -> Style {

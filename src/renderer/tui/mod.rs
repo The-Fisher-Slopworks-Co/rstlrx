@@ -98,18 +98,18 @@ impl TuiRenderer {
 
         // --- Lines before current ---
         // Phase 1: determine which lines fit (closest first)
-        let mut fitting: Vec<(usize, bool)> = Vec::new();
+        let mut fitting: Vec<(usize, Option<String>)> = Vec::new();
         let mut used = 0;
         for li in (0..update.index).rev() {
             let text = update.lines[li].text();
-            let has_rom = self.romanization(text).is_some();
-            let rows = if has_rom { 2 } else { 1 };
+            let rom = self.romanization(text);
+            let rows = if rom.is_some() { 2 } else { 1 };
 
             if used + rows <= before_count {
-                fitting.push((li, has_rom));
+                fitting.push((li, rom));
                 used += rows;
             } else if used + 1 <= before_count {
-                fitting.push((li, false));
+                fitting.push((li, None));
                 used += 1;
                 break;
             } else {
@@ -123,12 +123,11 @@ impl TuiRenderer {
         }
 
         // Phase 2: render furthest first
-        for &(li, has_rom) in fitting.iter().rev() {
-            let text = self.display_text(update.lines[li].text());
+        for (li, rom) in fitting.iter().rev() {
+            let text = self.display_text(update.lines[*li].text());
             output.push(ratatui::text::Line::styled(text, self.style_before));
-            if has_rom {
-                let rom = romanize::romanize(update.lines[li].text(), self.romanize_lang);
-                output.push(ratatui::text::Line::styled(rom, self.style_before));
+            if let Some(r) = rom {
+                output.push(ratatui::text::Line::styled(r.clone(), self.style_before));
             }
         }
 

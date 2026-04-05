@@ -169,13 +169,18 @@ impl SpotifyAuth {
         let n = tokio::io::AsyncReadExt::read(&mut stream, &mut buf).await?;
         let request = String::from_utf8_lossy(&buf[..n]);
 
-        let code = request
+        let path = request
             .lines()
             .next()
             .and_then(|line| line.split_whitespace().nth(1))
-            .and_then(|path| path.split("code=").nth(1))
-            .and_then(|code| code.split('&').next())
-            .map(|s| s.to_string())
+            .context("malformed callback request")?;
+
+        let url = Url::parse(&format!("http://127.0.0.1{path}"))
+            .context("cannot parse callback URL")?;
+        let code = url
+            .query_pairs()
+            .find(|(k, _)| k == "code")
+            .map(|(_, v)| v.into_owned())
             .context("no auth code in callback")?;
 
         let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n\
