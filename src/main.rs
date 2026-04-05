@@ -56,7 +56,7 @@ struct Cli {
     #[arg(long)]
     merge_queue: bool,
 
-    /// Romanize CJK characters: "inline" replaces in place, "duplicate" adds a romanized line below
+    /// Romanize CJK characters: "inline" replaces in place, "duplicate" adds a romanized line below, "current-only" adds romanization for the current line only
     #[arg(long, value_enum, default_value = "off")]
     romanize: romanize::RomanizeMode,
 

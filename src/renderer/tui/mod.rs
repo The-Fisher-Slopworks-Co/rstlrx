@@ -64,8 +64,10 @@ impl TuiRenderer {
         }
     }
 
-    fn romanization(&self, text: &str) -> Option<String> {
-        if self.romanize == RomanizeMode::Duplicate && romanize::has_romanizable(text) {
+    fn romanization(&self, text: &str, is_current: bool) -> Option<String> {
+        let active = self.romanize == RomanizeMode::Duplicate
+            || (self.romanize == RomanizeMode::CurrentOnly && is_current);
+        if active && romanize::has_romanizable(text) {
             Some(romanize::romanize(text, self.romanize_lang))
         } else {
             None
@@ -78,7 +80,7 @@ impl TuiRenderer {
         }
 
         let current_text = self.display_text(update.lines[update.index].text());
-        let current_rom = self.romanization(update.lines[update.index].text());
+        let current_rom = self.romanization(update.lines[update.index].text(), true);
         let current_rows = if current_rom.is_some() { 2 } else { 1 };
 
         let before_count = (height / 2).saturating_sub(self.padding_before);
@@ -95,7 +97,7 @@ impl TuiRenderer {
         let mut used = 0;
         for li in (0..update.index).rev() {
             let text = update.lines[li].text();
-            let rom = self.romanization(text);
+            let rom = self.romanization(text, false);
             let rows = if rom.is_some() { 2 } else { 1 };
 
             if used + rows <= before_count {
@@ -147,7 +149,7 @@ impl TuiRenderer {
                 break;
             }
             let text = update.lines[li].text();
-            let rom = self.romanization(text);
+            let rom = self.romanization(text, false);
             let rows = if rom.is_some() { 2 } else { 1 };
 
             if after_used + rows <= after_count {
@@ -363,6 +365,64 @@ mod tests {
         // Without padding, the adjacent lines should be real lyrics
         assert_eq!(line_text(&output[current_pos - 1]), "two");
         assert_eq!(line_text(&output[current_pos + 1]), "four");
+    }
+
+    fn make_renderer_with_romanize(mode: RomanizeMode, lang: RomanizeLang) -> TuiRenderer {
+        TuiRenderer::new(TuiConfig {
+            style_before: "faint".to_string(),
+            style_current: "bold".to_string(),
+            style_after: "faint".to_string(),
+            color_before: None,
+            color_current: None,
+            color_after: None,
+            ignore_errors: false,
+            romanize: mode,
+            romanize_lang: lang,
+            padding_before: 0,
+            padding_after: 0,
+        })
+    }
+
+    #[test]
+    fn test_current_only_romanizes_current_line() {
+        let renderer = make_renderer_with_romanize(RomanizeMode::CurrentOnly, RomanizeLang::Auto);
+        // All CJK lines; current is index=1 ("世界")
+        let update = make_update(&["你好", "世界", "再见"], 1);
+        let output = renderer.build_output(&update, 10);
+
+        let current_pos = find_current(&output, "世界");
+        // Romanization line should follow immediately after current
+        let rom = line_text(&output[current_pos + 1]);
+        assert!(!rom.is_empty(), "romanization line should not be empty");
+        assert!(
+            !romanize::has_romanizable(&rom),
+            "line after current should be romanization (no CJK), got: {rom}"
+        );
+    }
+
+    #[test]
+    fn test_current_only_no_romanization_for_non_current_lines() {
+        let renderer = make_renderer_with_romanize(RomanizeMode::CurrentOnly, RomanizeLang::Auto);
+        // All lines are CJK, current is index=1 ("世界")
+        let update = make_update(&["你好", "世界", "再见"], 1);
+        let output = renderer.build_output(&update, 10);
+
+        // Non-empty lines should be: "你好", "世界", <romanization>, "再见" = 4 total
+        let non_empty: Vec<String> = output
+            .iter()
+            .map(|l| line_text(l))
+            .filter(|t| !t.is_empty())
+            .collect();
+        assert_eq!(
+            non_empty.len(),
+            4,
+            "expected 3 lyrics + 1 romanization, got: {non_empty:?}"
+        );
+
+        // "你好" should appear as-is (not romanized inline)
+        assert!(non_empty.contains(&"你好".to_string()));
+        // "再见" should appear as-is (not romanized inline)
+        assert!(non_empty.contains(&"再见".to_string()));
     }
 
     #[test]

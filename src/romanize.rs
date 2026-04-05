@@ -6,6 +6,7 @@ pub enum RomanizeMode {
     Off,
     Inline,
     Duplicate,
+    CurrentOnly,
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
