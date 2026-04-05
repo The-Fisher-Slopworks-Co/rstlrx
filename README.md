@@ -3,8 +3,13 @@
 🚀🚀🚀 A blazingly fast, memory-safe, lightweight Spotify lyrics viewer for your terminal. 🚀🚀🚀
 
 <p align="center">
-  <img src="./demo.gif" width="450"/>
+  <img src="./demo.gif" width="450"/><br>
+  moë — No Disk
 </p>
+
+```bash
+rstlrx --romanize current-only --romanize-lang ja --padding-before 1 --padding-after 1
+```
 
 ## What's new compared to sptlrx
 
