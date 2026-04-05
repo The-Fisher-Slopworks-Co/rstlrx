@@ -2,7 +2,9 @@
 
 🚀🚀🚀 A blazingly fast, memory-safe, lightweight Spotify lyrics viewer for your terminal. 🚀🚀🚀
 
-<img src="./demo.gif" width="450"/>
+<p align="center">
+  <img src="./demo.gif" width="450"/>
+</p>
 
 ## What's new compared to sptlrx
 
