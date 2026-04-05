@@ -12,6 +12,7 @@ use ratatui::Frame;
 use tokio::sync::mpsc;
 
 use crate::renderer::{Renderer, Update};
+use crate::romanize::{self, RomanizeLang, RomanizeMode};
 use style::build_style;
 
 pub struct TuiConfig {
@@ -22,6 +23,8 @@ pub struct TuiConfig {
     pub color_current: Option<String>,
     pub color_after: Option<String>,
     pub ignore_errors: bool,
+    pub romanize: RomanizeMode,
+    pub romanize_lang: RomanizeLang,
 }
 
 pub struct TuiRenderer {
@@ -29,6 +32,8 @@ pub struct TuiRenderer {
     style_current: Style,
     style_after: Style,
     ignore_errors: bool,
+    romanize: RomanizeMode,
+    romanize_lang: RomanizeLang,
     state: Option<Update>,
 }
 
@@ -39,7 +44,25 @@ impl TuiRenderer {
             style_current: build_style(&config.style_current, config.color_current.as_deref()),
             style_after: build_style(&config.style_after, config.color_after.as_deref()),
             ignore_errors: config.ignore_errors,
+            romanize: config.romanize,
+            romanize_lang: config.romanize_lang,
             state: None,
+        }
+    }
+
+    fn display_text(&self, text: &str) -> String {
+        if self.romanize == RomanizeMode::Inline && romanize::has_romanizable(text) {
+            romanize::romanize(text, self.romanize_lang)
+        } else {
+            text.to_string()
+        }
+    }
+
+    fn romanization(&self, text: &str) -> Option<String> {
+        if self.romanize == RomanizeMode::Duplicate && romanize::has_romanizable(text) {
+            Some(romanize::romanize(text, self.romanize_lang))
+        } else {
+            None
         }
     }
 
@@ -64,47 +87,91 @@ impl TuiRenderer {
             return;
         }
 
+        let current_text = self.display_text(update.lines[update.index].text());
+        let current_rom = self.romanization(update.lines[update.index].text());
+        let current_rows = if current_rom.is_some() { 2 } else { 1 };
+
         let before_count = height / 2;
-        let after_count = height.saturating_sub(before_count).saturating_sub(1);
+        let after_count = height.saturating_sub(before_count).saturating_sub(current_rows);
 
         let mut output: Vec<ratatui::text::Line> = Vec::with_capacity(height);
 
-        // Lines before current
-        for i in (0..before_count).rev() {
-            let idx = update.index as isize - i as isize - 1;
-            if idx >= 0 && (idx as usize) < update.lines.len() {
-                output.push(ratatui::text::Line::styled(
-                    update.lines[idx as usize].text().to_string(),
-                    self.style_before,
-                ));
+        // --- Lines before current ---
+        // Phase 1: determine which lines fit (closest first)
+        let mut fitting: Vec<(usize, bool)> = Vec::new();
+        let mut used = 0;
+        for li in (0..update.index).rev() {
+            let text = update.lines[li].text();
+            let has_rom = self.romanization(text).is_some();
+            let rows = if has_rom { 2 } else { 1 };
+
+            if used + rows <= before_count {
+                fitting.push((li, has_rom));
+                used += rows;
+            } else if used + 1 <= before_count {
+                fitting.push((li, false));
+                used += 1;
+                break;
             } else {
-                output.push(ratatui::text::Line::raw(""));
+                break;
             }
         }
 
-        // Current line with markers (only for Lyric, not Separator)
-        let current = &update.lines[update.index];
-        if current.is_separator() {
-            output.push(ratatui::text::Line::styled(
-                current.text().to_string(),
-                self.style_current,
-            ));
-        } else {
-            let current_text = format!("> {} <", current.text());
-            output.push(ratatui::text::Line::styled(current_text, self.style_current));
+        // Pad top
+        for _ in 0..(before_count - used) {
+            output.push(ratatui::text::Line::raw(""));
         }
 
-        // Lines after current
-        for i in 1..=after_count {
-            let idx = update.index + i;
-            if idx < update.lines.len() {
+        // Phase 2: render furthest first
+        for &(li, has_rom) in fitting.iter().rev() {
+            let text = self.display_text(update.lines[li].text());
+            output.push(ratatui::text::Line::styled(text, self.style_before));
+            if has_rom {
+                let rom = romanize::romanize(update.lines[li].text(), self.romanize_lang);
+                output.push(ratatui::text::Line::styled(rom, self.style_before));
+            }
+        }
+
+        // --- Current line ---
+        output.push(ratatui::text::Line::styled(current_text, self.style_current));
+        if let Some(rom) = current_rom {
+            output.push(ratatui::text::Line::styled(rom, self.style_current));
+        }
+
+        // --- Lines after current ---
+        let mut after_used = 0;
+        for li in (update.index + 1)..update.lines.len() {
+            if after_used >= after_count {
+                break;
+            }
+            let text = update.lines[li].text();
+            let rom = self.romanization(text);
+            let rows = if rom.is_some() { 2 } else { 1 };
+
+            if after_used + rows <= after_count {
                 output.push(ratatui::text::Line::styled(
-                    update.lines[idx].text().to_string(),
+                    self.display_text(text),
                     self.style_after,
                 ));
+                if let Some(r) = rom {
+                    output.push(ratatui::text::Line::styled(r, self.style_after));
+                }
+                after_used += rows;
+            } else if after_used + 1 <= after_count {
+                output.push(ratatui::text::Line::styled(
+                    self.display_text(text),
+                    self.style_after,
+                ));
+                after_used += 1;
+                break;
             } else {
-                output.push(ratatui::text::Line::raw(""));
+                break;
             }
+        }
+
+        // Pad bottom
+        for _ in 0..(after_count - after_used) {
+            output.push(ratatui::text::Line::raw(""));
         }
 
         let text = Text::from(output);
