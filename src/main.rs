@@ -63,6 +63,14 @@ struct Cli {
     /// Language for romanization: zh (pinyin), ja (romaji), ko (Korean), auto
     #[arg(long, value_enum, default_value = "auto")]
     romanize_lang: romanize::RomanizeLang,
+
+    /// Number of empty lines before the current line
+    #[arg(long, default_value = "0")]
+    padding_before: usize,
+
+    /// Number of empty lines after the current line
+    #[arg(long, default_value = "0")]
+    padding_after: usize,
 }
 
 #[derive(Subcommand)]
@@ -114,6 +122,8 @@ async fn main() -> Result<()> {
                 ignore_errors: cli.ignore_errors,
                 romanize: cli.romanize,
                 romanize_lang: cli.romanize_lang,
+                padding_before: cli.padding_before,
+                padding_after: cli.padding_after,
             });
 
             renderer.run(rx).await?;

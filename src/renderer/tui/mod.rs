@@ -25,6 +25,8 @@ pub struct TuiConfig {
     pub ignore_errors: bool,
     pub romanize: RomanizeMode,
     pub romanize_lang: RomanizeLang,
+    pub padding_before: usize,
+    pub padding_after: usize,
 }
 
 pub struct TuiRenderer {
@@ -34,6 +36,8 @@ pub struct TuiRenderer {
     ignore_errors: bool,
     romanize: RomanizeMode,
     romanize_lang: RomanizeLang,
+    padding_before: usize,
+    padding_after: usize,
     state: Option<Update>,
 }
 
@@ -46,6 +50,8 @@ impl TuiRenderer {
             ignore_errors: config.ignore_errors,
             romanize: config.romanize,
             romanize_lang: config.romanize_lang,
+            padding_before: config.padding_before,
+            padding_after: config.padding_after,
             state: None,
         }
     }
@@ -66,33 +72,20 @@ impl TuiRenderer {
         }
     }
 
-    fn render(&self, frame: &mut Frame) {
-        let area = frame.area();
-        let height = area.height as usize;
-
-        let update = match &self.state {
-            Some(u) => u,
-            None => return,
-        };
-
-        if let Some(ref err) = update.error {
-            if !self.ignore_errors {
-                let paragraph = Paragraph::new(err.as_str()).alignment(Alignment::Center);
-                frame.render_widget(paragraph, area);
-                return;
-            }
-        }
-
+    fn build_output(&self, update: &Update, height: usize) -> Vec<ratatui::text::Line<'_>> {
         if update.lines.is_empty() {
-            return;
+            return Vec::new();
         }
 
         let current_text = self.display_text(update.lines[update.index].text());
         let current_rom = self.romanization(update.lines[update.index].text());
         let current_rows = if current_rom.is_some() { 2 } else { 1 };
 
-        let before_count = height / 2;
-        let after_count = height.saturating_sub(before_count).saturating_sub(current_rows);
+        let before_count = (height / 2).saturating_sub(self.padding_before);
+        let after_count = height
+            .saturating_sub(height / 2)
+            .saturating_sub(current_rows)
+            .saturating_sub(self.padding_after);
 
         let mut output: Vec<ratatui::text::Line> = Vec::with_capacity(height);
 
@@ -131,10 +124,20 @@ impl TuiRenderer {
             }
         }
 
+        // Padding before current line
+        for _ in 0..self.padding_before {
+            output.push(ratatui::text::Line::raw(""));
+        }
+
         // --- Current line ---
         output.push(ratatui::text::Line::styled(current_text, self.style_current));
         if let Some(rom) = current_rom {
             output.push(ratatui::text::Line::styled(rom, self.style_current));
+        }
+
+        // Padding after current line
+        for _ in 0..self.padding_after {
+            output.push(ratatui::text::Line::raw(""));
         }
 
         // --- Lines after current ---
@@ -171,6 +174,31 @@ impl TuiRenderer {
         // Pad bottom
         for _ in 0..(after_count - after_used) {
             output.push(ratatui::text::Line::raw(""));
+        }
+
+        output
+    }
+
+    fn render(&self, frame: &mut Frame) {
+        let area = frame.area();
+        let height = area.height as usize;
+
+        let update = match &self.state {
+            Some(u) => u,
+            None => return,
+        };
+
+        if let Some(ref err) = update.error {
+            if !self.ignore_errors {
+                let paragraph = Paragraph::new(err.as_str()).alignment(Alignment::Center);
+                frame.render_widget(paragraph, area);
+                return;
+            }
+        }
+
+        let output = self.build_output(update, height);
+        if output.is_empty() {
+            return;
         }
 
         let text = Text::from(output);
@@ -225,5 +253,127 @@ impl Renderer for TuiRenderer {
         )?;
 
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lyrics::Line;
+    use crate::renderer::{DisplayLine, Update};
+
+    fn make_renderer(padding_before: usize, padding_after: usize) -> TuiRenderer {
+        TuiRenderer::new(TuiConfig {
+            style_before: "faint".to_string(),
+            style_current: "bold".to_string(),
+            style_after: "faint".to_string(),
+            color_before: None,
+            color_current: None,
+            color_after: None,
+            ignore_errors: false,
+            romanize: RomanizeMode::Off,
+            romanize_lang: RomanizeLang::Auto,
+            padding_before,
+            padding_after,
+        })
+    }
+
+    fn make_lines(words: &[&str]) -> Vec<DisplayLine> {
+        words
+            .iter()
+            .enumerate()
+            .map(|(i, w)| {
+                DisplayLine::Lyric(Line {
+                    time_ms: (i as u64) * 1000,
+                    words: w.to_string(),
+                })
+            })
+            .collect()
+    }
+
+    fn make_update(words: &[&str], index: usize) -> Update {
+        Update {
+            lines: make_lines(words),
+            index,
+            error: None,
+        }
+    }
+
+    fn line_text(line: &ratatui::text::Line) -> String {
+        line.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    fn find_current(output: &[ratatui::text::Line], text: &str) -> usize {
+        output
+            .iter()
+            .position(|l| line_text(l) == text)
+            .unwrap_or_else(|| panic!("current line '{text}' not found in output"))
+    }
+
+    #[test]
+    fn test_padding_before_inserts_empty_lines() {
+        let renderer = make_renderer(2, 0);
+        let update = make_update(&["one", "two", "three", "four", "five"], 2);
+        let output = renderer.build_output(&update, 20);
+
+        let current_pos = find_current(&output, "three");
+
+        // The 2 lines immediately before current must be empty (padding)
+        assert_eq!(line_text(&output[current_pos - 1]), "");
+        assert_eq!(line_text(&output[current_pos - 2]), "");
+        // The line before the padding should be a real lyric
+        assert_eq!(line_text(&output[current_pos - 3]), "two");
+    }
+
+    #[test]
+    fn test_padding_after_inserts_empty_lines() {
+        let renderer = make_renderer(0, 2);
+        let update = make_update(&["one", "two", "three", "four", "five"], 2);
+        let output = renderer.build_output(&update, 20);
+
+        let current_pos = find_current(&output, "three");
+
+        // The 2 lines immediately after current must be empty (padding)
+        assert_eq!(line_text(&output[current_pos + 1]), "");
+        assert_eq!(line_text(&output[current_pos + 2]), "");
+        // The line after the padding should be a real lyric
+        assert_eq!(line_text(&output[current_pos + 3]), "four");
+    }
+
+    #[test]
+    fn test_padding_both_directions() {
+        let renderer = make_renderer(1, 1);
+        let update = make_update(&["one", "two", "three", "four", "five"], 2);
+        let output = renderer.build_output(&update, 20);
+
+        let current_pos = find_current(&output, "three");
+
+        assert_eq!(line_text(&output[current_pos - 1]), "");
+        assert_eq!(line_text(&output[current_pos + 1]), "");
+    }
+
+    #[test]
+    fn test_padding_zero_is_no_op() {
+        let renderer = make_renderer(0, 0);
+        let update = make_update(&["one", "two", "three", "four", "five"], 2);
+        let output = renderer.build_output(&update, 20);
+
+        let current_pos = find_current(&output, "three");
+
+        // Without padding, the adjacent lines should be real lyrics
+        assert_eq!(line_text(&output[current_pos - 1]), "two");
+        assert_eq!(line_text(&output[current_pos + 1]), "four");
+    }
+
+    #[test]
+    fn test_output_height_preserved_with_padding() {
+        let renderer = make_renderer(3, 2);
+        let update = make_update(
+            &["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"],
+            4,
+        );
+        let output = renderer.build_output(&update, 20);
+
+        assert_eq!(output.len(), 20);
     }
 }
