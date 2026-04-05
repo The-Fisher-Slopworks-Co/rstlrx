@@ -6,7 +6,7 @@ Synced lyrics in your terminal. Like karaoke, but for Spotify.
         I've been searching for a trail to follow again
         Take me back to the night we met
 
-      > I don't know what I'm supposed to do <
+        I don't know what I'm supposed to do
 
         Haunted by the ghost of you
         Take me back to the night we met
@@ -50,6 +50,14 @@ rstlrx
 
 Lyrics appear synced to your playback. Press `q` or `Esc` to quit.
 
+### Queue merge
+
+By default, rstlrx shows one song at a time. If you want a continuous scroll across tracks (next song's lyrics appear below the current one with a separator):
+
+```bash
+rstlrx --merge-queue
+```
+
 ### Styling
 
 The default look is faint text above and below, bold for the current line. You can change that:
@@ -91,4 +99,4 @@ Lyrics provided by [lrclib.net](https://lrclib.net).
 
 ## License
 
-MIT
+AGPL-3.0
