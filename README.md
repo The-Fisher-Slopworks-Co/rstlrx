@@ -1,6 +1,6 @@
 # rstlrx
 
-Synced lyrics in your terminal. Like karaoke, but for Spotify.
+🚀🚀🚀 A blazingly fast, memory-safe, lightweight Spotify lyrics viewer for your terminal. 🚀🚀🚀
 
 ```
         I've been searching for a trail to follow again
@@ -12,90 +12,38 @@ Synced lyrics in your terminal. Like karaoke, but for Spotify.
         Take me back to the night we met
 ```
 
-The current line sits in the middle of your screen. Previous and upcoming lyrics scroll around it.
+## What's new compared to sptlrx
 
-## What you need
+This is a Rust port of [sptlrx](https://github.com/raitonoberu/sptlrx). The original doesn't have:
 
-- A Spotify account (free or premium)
-- A Spotify Developer app (see below)
-- Rust toolchain to build from source
+- **CJK romanization** (`--romanize`). Chinese pinyin, Japanese romaji, Korean romanization. Four modes: replace in place, add a line below, show only for the current line, or off. For when you want to sing along but can't read the characters.
+- **Queue merge** (`--merge-queue`). Lyrics from the next track appear below the current song, so you get one continuous scroll.
+- **Padding** (`--padding-before`, `--padding-after`). Extra empty lines around the current line.
 
-## Install
+Everything else is in `rstlrx --help`.
+
+## Why Rust
+
+The Go garbage collector introduces unpredictable latency spikes during terminal rendering, and its goroutine scheduler lacks the guarantees needed for precise lyric synchronization. Reasoning about state transitions in a concurrent polling loop without a strong type system is hard.
+
+rstlrx solves this with zero-cost abstractions, fearless concurrency, and compile-time correctness. Every state transition is encoded in the type system. Every concurrent access is verified by the borrow checker. If it compiles, it works.
+
+## Setup
+
+You need a Spotify app. Go to [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard), create an app, set the redirect URI to `http://127.0.0.1:8888/callback`.
 
 ```bash
 git clone https://github.com/txssu/rstlrx
 cd rstlrx
 cargo install --path .
-```
-
-## Spotify setup
-
-You need a Spotify app to let rstlrx read your playback state. Go to [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard), create an app, and set the redirect URI to `http://127.0.0.1:8888/callback`.
-
-Then log in:
-
-```bash
 rstlrx login --client-id YOUR_CLIENT_ID --client-secret YOUR_CLIENT_SECRET
 ```
 
-This opens your browser, you authorize, and the tokens get saved locally. You only do this once.
-
-## Usage
-
-Play something on Spotify, then run:
-
-```bash
-rstlrx
-```
-
-Lyrics appear synced to your playback. Press `q` or `Esc` to quit.
-
-### Queue merge
-
-By default, rstlrx shows one song at a time. If you want a continuous scroll across tracks (next song's lyrics appear below the current one with a separator):
-
-```bash
-rstlrx --merge-queue
-```
-
-### Styling
-
-The default look is faint text above and below, bold for the current line. You can change that:
-
-```bash
-# Bold italic current line in cyan, dim surroundings in gray
-rstlrx --style-current bold,italic --color-current cyan --color-before gray --color-after gray
-
-# Red current line with underline
-rstlrx --style-current bold,underline --color-current "#ff3333"
-
-# ANSI color codes work too
-rstlrx --color-current 214 --color-before 240 --color-after 240
-```
-
-Style options: `bold`, `italic`, `underline`, `faint`. Combine with commas.
-
-Color formats: named (`red`, `cyan`, `gray`), hex (`#ff5500`), ANSI 0-255 (`245`).
-
-### Errors
-
-By default, errors (Spotify unreachable, no lyrics found) show up in the UI. If that bothers you:
-
-```bash
-rstlrx --ignore-errors
-```
-
-## How it works
-
-rstlrx polls your Spotify playback every 2 seconds and interpolates the position between polls (200ms ticks). When the track changes, it fetches synced lyrics from [lrclib.net](https://lrclib.net). If there's a next track in your Spotify queue, rstlrx fetches its lyrics too and stitches them together with a separator — so you get one continuous scroll of text across songs.
-
-Internally there are three trait abstractions: `Player` (reports what's playing), `LyricsProvider` (fetches lyrics), and `Renderer` (draws them). Right now the only implementations are Spotify, lrclib.net, and the terminal UI, but adding a new source or output is just a trait impl and a few lines in `main.rs`.
+Then play something on Spotify and run `rstlrx`.
 
 ## Credits
 
-A Rust port of [sptlrx](https://github.com/raitonoberu/sptlrx) by raitonoberu.
-
-Lyrics provided by [lrclib.net](https://lrclib.net).
+Lyrics from [lrclib.net](https://lrclib.net). Original project by [raitonoberu](https://github.com/raitonoberu/sptlrx).
 
 ## License
 
