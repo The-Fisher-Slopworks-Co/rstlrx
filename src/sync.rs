@@ -9,6 +9,7 @@ use crate::renderer::{DisplayLine, Update};
 pub struct SyncConfig {
     pub player_poll_interval: Duration,
     pub ui_timer_interval: Duration,
+    pub merge_queue: bool,
 }
 
 impl Default for SyncConfig {
@@ -16,6 +17,7 @@ impl Default for SyncConfig {
         Self {
             player_poll_interval: Duration::from_millis(2000),
             ui_timer_interval: Duration::from_millis(200),
+            merge_queue: false,
         }
     }
 }
@@ -67,7 +69,7 @@ async fn sync_loop(
     let mut error: Option<String> = None;
     let mut queue_rechecked = false;
 
-    let mut timer = tokio::time::interval(config.ui_timer_interval);
+    let mut sleep_duration = config.ui_timer_interval;
 
     loop {
         // --- Handle events ---
@@ -77,21 +79,11 @@ async fn sync_loop(
                     Ok(Some(state)) => {
                         is_playing = state.is_playing;
 
-                        if state.track_id == current_track_id {
-                            // Same track: just correct position
-                            last_state_position = state.position_ms;
-                            last_state_time = Instant::now();
-                            current_duration = state.duration_ms;
-                        } else if state.track_id == next_track_id && next_track_start.is_some() {
-                            // Poll confirms our auto-transition — just sync position
-                            last_state_position = state.position_ms;
-                            last_state_time = Instant::now();
-                            current_duration = state.duration_ms;
-                        } else if current_track_id.is_empty() || state.track_id != next_track_id {
-                            // First track or unexpected track: full rebuild
-                            current_duration = state.duration_ms;
-                            last_state_position = state.position_ms;
-                            last_state_time = Instant::now();
+                        current_duration = state.duration_ms;
+
+                        if state.track_id != current_track_id {
+                            let smooth = state.track_id == next_track_id
+                                && next_track_start.is_some();
 
                             transition_to_new_track(
                                 &state.track_id,
@@ -110,11 +102,18 @@ async fn sync_loop(
                                 &mut next_artist,
                                 &mut next_track_name,
                                 &mut next_track_start,
-                                false, // rebuild from scratch
+                                smooth && config.merge_queue,
+                                config.merge_queue,
                             )
                             .await;
                             queue_rechecked = false;
                         }
+
+                        // Set timing AFTER transition completes so that
+                        // time spent in async fetches doesn't inflate
+                        // the interpolated position on the first render.
+                        last_state_position = state.position_ms;
+                        last_state_time = Instant::now();
                     }
                     Ok(None) => {
                         is_playing = false;
@@ -136,7 +135,7 @@ async fn sync_loop(
                     }
                 }
             }
-            _ = timer.tick() => {}
+            _ = tokio::time::sleep(sleep_duration) => {}
         }
 
         // --- Simulate position ---
@@ -147,7 +146,8 @@ async fn sync_loop(
         };
 
         // --- Recheck queue 10s before track ends ---
-        if is_playing
+        if config.merge_queue
+            && is_playing
             && !queue_rechecked
             && current_duration > 10_000
             && position >= current_duration - 10_000
@@ -186,7 +186,8 @@ async fn sync_loop(
         }
 
         // --- Auto-transition when position reaches track duration ---
-        if is_playing
+        if config.merge_queue
+            && is_playing
             && current_duration > 0
             && position >= current_duration
             && next_track_start.is_some()
@@ -196,8 +197,6 @@ async fn sync_loop(
             current_lyrics = std::mem::take(&mut next_lyrics);
             current_track_id.clone_from(&next_track_id);
             current_duration = 0; // unknown until next poll corrects it
-            last_state_position = overflow;
-            last_state_time = Instant::now();
             index = current_track_offset;
             error = None;
             queue_rechecked = false;
@@ -222,6 +221,11 @@ async fn sync_loop(
                     }
                 }
             }
+
+            // Set timing AFTER async fetches so elapsed time
+            // during network requests doesn't inflate position.
+            last_state_position = overflow;
+            last_state_time = Instant::now();
         }
 
         // --- Calculate current line index ---
@@ -231,6 +235,24 @@ async fn sync_loop(
             let local_index = get_index(position, clamped, &current_lyrics);
             index = current_track_offset + local_index;
         }
+
+        // --- Schedule next wake-up precisely at the next line transition ---
+        sleep_duration = if is_playing && !current_lyrics.is_empty() {
+            let local_idx = index.saturating_sub(current_track_offset);
+            if local_idx + 1 < current_lyrics.len() {
+                let next_time_ms = current_lyrics[local_idx + 1].time_ms;
+                let pos_now = last_state_position + last_state_time.elapsed().as_millis() as u64;
+                if next_time_ms > pos_now {
+                    Duration::from_millis(next_time_ms - pos_now).min(config.ui_timer_interval)
+                } else {
+                    Duration::from_millis(10)
+                }
+            } else {
+                config.ui_timer_interval
+            }
+        } else {
+            config.ui_timer_interval
+        };
 
         if tx
             .send(Update {
@@ -266,6 +288,7 @@ async fn transition_to_new_track(
     next_track_name: &mut String,
     next_track_start: &mut Option<usize>,
     smooth: bool,
+    merge_queue: bool,
 ) {
     if smooth {
         *current_track_offset = next_track_start.unwrap();
@@ -300,7 +323,7 @@ async fn transition_to_new_track(
     next_lyrics.clear();
     next_track_id.clear();
     *next_track_start = None;
-    if let Ok(queue) = player.queue().await {
+    if merge_queue && let Ok(queue) = player.queue().await {
         if let Some(next) = queue.into_iter().next() {
             *next_track_id = next.track_id;
             *next_artist = next.artist;

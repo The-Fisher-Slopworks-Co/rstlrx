@@ -1,6 +1,7 @@
 mod lyrics;
 mod player;
 mod renderer;
+mod romanize;
 mod sync;
 
 use std::sync::Arc;
@@ -50,6 +51,18 @@ struct Cli {
     /// Suppress error display in the UI
     #[arg(long)]
     ignore_errors: bool,
+
+    /// Show lyrics for upcoming tracks as a continuous scroll
+    #[arg(long)]
+    merge_queue: bool,
+
+    /// Romanize CJK characters: "inline" replaces in place, "duplicate" adds a romanized line below
+    #[arg(long, value_enum, default_value = "off")]
+    romanize: romanize::RomanizeMode,
+
+    /// Language for romanization: zh (pinyin), ja (romaji), ko (Korean), auto
+    #[arg(long, value_enum, default_value = "auto")]
+    romanize_lang: romanize::RomanizeLang,
 }
 
 #[derive(Subcommand)]
@@ -82,7 +95,14 @@ async fn main() -> Result<()> {
             let player: Arc<dyn Player> = Arc::new(SpotifyPlayer::new(auth));
             let provider: Box<dyn LyricsProvider> = Box::new(LrclibProvider::new());
 
-            let rx = start_sync(player, provider, SyncConfig::default());
+            let rx = start_sync(
+                player,
+                provider,
+                SyncConfig {
+                    merge_queue: cli.merge_queue,
+                    ..SyncConfig::default()
+                },
+            );
 
             let mut renderer = TuiRenderer::new(TuiConfig {
                 style_before: cli.style_before,
@@ -92,6 +112,8 @@ async fn main() -> Result<()> {
                 color_current: cli.color_current,
                 color_after: cli.color_after,
                 ignore_errors: cli.ignore_errors,
+                romanize: cli.romanize,
+                romanize_lang: cli.romanize_lang,
             });
 
             renderer.run(rx).await?;
