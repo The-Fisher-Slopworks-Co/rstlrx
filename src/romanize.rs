@@ -1,6 +1,8 @@
 use clap::ValueEnum;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum RomanizeMode {
     #[default]
     Off,
@@ -9,7 +11,8 @@ pub enum RomanizeMode {
     CurrentOnly,
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum RomanizeLang {
     /// Chinese pinyin
     Zh,

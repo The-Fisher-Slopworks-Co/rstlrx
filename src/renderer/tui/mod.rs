@@ -11,23 +11,10 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use tokio::sync::mpsc;
 
+use crate::config::Config;
 use crate::renderer::{Renderer, Update};
 use crate::romanize::{self, RomanizeLang, RomanizeMode};
 use style::build_style;
-
-pub struct TuiConfig {
-    pub style_before: String,
-    pub style_current: String,
-    pub style_after: String,
-    pub color_before: Option<String>,
-    pub color_current: Option<String>,
-    pub color_after: Option<String>,
-    pub ignore_errors: bool,
-    pub romanize: RomanizeMode,
-    pub romanize_lang: RomanizeLang,
-    pub padding_before: usize,
-    pub padding_after: usize,
-}
 
 pub struct TuiRenderer {
     style_before: Style,
@@ -42,7 +29,7 @@ pub struct TuiRenderer {
 }
 
 impl TuiRenderer {
-    pub fn new(config: TuiConfig) -> Self {
+    pub fn new(config: &Config) -> Self {
         Self {
             style_before: build_style(&config.style_before, config.color_before.as_deref()),
             style_current: build_style(&config.style_current, config.color_current.as_deref()),
@@ -265,18 +252,10 @@ mod tests {
     use crate::renderer::{DisplayLine, Update};
 
     fn make_renderer(padding_before: usize, padding_after: usize) -> TuiRenderer {
-        TuiRenderer::new(TuiConfig {
-            style_before: "faint".to_string(),
-            style_current: "bold".to_string(),
-            style_after: "faint".to_string(),
-            color_before: None,
-            color_current: None,
-            color_after: None,
-            ignore_errors: false,
-            romanize: RomanizeMode::Off,
-            romanize_lang: RomanizeLang::Auto,
+        TuiRenderer::new(&Config {
             padding_before,
             padding_after,
+            ..Config::default()
         })
     }
 
@@ -368,18 +347,10 @@ mod tests {
     }
 
     fn make_renderer_with_romanize(mode: RomanizeMode, lang: RomanizeLang) -> TuiRenderer {
-        TuiRenderer::new(TuiConfig {
-            style_before: "faint".to_string(),
-            style_current: "bold".to_string(),
-            style_after: "faint".to_string(),
-            color_before: None,
-            color_current: None,
-            color_after: None,
-            ignore_errors: false,
+        TuiRenderer::new(&Config {
             romanize: mode,
             romanize_lang: lang,
-            padding_before: 0,
-            padding_after: 0,
+            ..Config::default()
         })
     }
 
