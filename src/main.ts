@@ -11,6 +11,7 @@ import type { Player } from "./player";
 import { TuiRenderer } from "./renderer/tui";
 import type { Renderer } from "./renderer";
 import { startSync, type SyncConfig } from "./sync";
+import { initRomanizer } from "./romanize";
 import type { RomanizeLang, RomanizeMode } from "./romanize";
 
 const USAGE = `Terminal lyrics viewer synced with Spotify
@@ -192,6 +193,17 @@ async function runDefault(argv: string[]): Promise<void> {
   };
 
   const rx = startSync(player, provider, config);
+
+  // Lazily load the Japanese morphological dictionary (~17MB on disk) only when
+  // romanization is enabled for a language that can use it (ja / auto), so users
+  // who don't need it never pay the load cost. Failures are swallowed inside
+  // `initRomanizer`, which leaves the any-ascii fallback in place.
+  if (
+    effective.romanize !== "off" &&
+    (effective.romanize_lang === "ja" || effective.romanize_lang === "auto")
+  ) {
+    await initRomanizer();
+  }
 
   const renderer: Renderer = new TuiRenderer(effective);
   await renderer.run(rx);

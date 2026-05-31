@@ -1,6 +1,6 @@
 # rstlrx — Rust → TypeScript/Bun Migration Report
 
-Status: **GREEN** — typecheck pass, build pass, `bun test` 91 pass / 0 fail.
+Status: **GREEN** — typecheck pass, build pass, `bun test` 93 pass / 0 fail.
 
 ## 1. Overview
 
@@ -43,8 +43,8 @@ bun run src/main.ts [--style-current bold --color-current "#ff5500" --romanize i
 ```
 
 Verification outcome (reproduced during this report): `typecheck` exits 0;
-`build` bundles 25 modules into `dist/main.js` (~1.40 MB); `bun test` reports
-`91 pass, 0 fail` across 10 files (189 `expect()` calls).
+`build` bundles 28 modules into `dist/main.js` (~1.47 MB); `bun test` reports
+`93 pass, 0 fail` across 10 files (191 `expect()` calls).
 
 ## 2. File mapping (every Rust file → TS file)
 
@@ -88,7 +88,7 @@ select loops.
 | `futures` (0.3, `StreamExt`) | no dep — native async + the stdin `Channel` bridge replaces `EventStream` |
 | `any_ascii` (0.3.3) | `any-ascii` npm (`anyAscii(string)`, per-char `anyAscii(c)`) |
 | `pinyin` (0.11, `plain`) | `pinyin-pro` — `pinyin(c, { toneType: "none" })` on a single Han code point only |
-| `kakasi` (0.1) | `any-ascii` per CJK run (Japanese romaji) — kana exact, kanji approximate, **see §5** |
+| `kakasi` (0.1) | `@patdx/kuromoji` (IPADIC, dictionary-based) + `wanakana` (`toRomaji`, Hepburn) — kanji→reading via the morphological tokenizer (same class as kakasi), kana via wanakana; **see §5** |
 
 ## 4. Test summary
 
@@ -99,7 +99,7 @@ constructors translated to the TS data model (`Line{time_ms,words}` →
 `Color::Rgb/Indexed/Red` → structural `{type,...}` objects; `Style::default()` →
 `{bold,italic,underline,dim,fg}`). `assert_eq!` → `toEqual`, `assert!` → `toBe`.
 
-Final result: **`bun test` → 91 pass, 0 fail (10 files, 189 `expect()` calls).**
+Final result: **`bun test` → 93 pass, 0 fail (10 files, 191 `expect()` calls).**
 
 Per-file porting tally:
 
@@ -110,14 +110,15 @@ Per-file porting tally:
 | `src/player/spotify/index.test.ts` | 6 | ported from `player/spotify/mod.rs` (6) |
 | `src/renderer/tui/index.test.ts` | 7 | ported from `renderer/tui/mod.rs` (7) |
 | `src/renderer/tui/style.test.ts` | 16 | ported from `renderer/tui/style.rs` (16) |
-| `src/romanize.test.ts` | 15 | ported from `romanize.rs` (15) |
+| `src/romanize.test.ts` | 17 | 15 ported from `romanize.rs` (15) + 2 new (kuromoji exact-value) |
 | `src/sync.test.ts` | 12 | ported from `sync.rs` (12) |
 | `src/config.test.ts` | 6 | **new** (Rust `config.rs` had no `#[test]`) |
 | `src/channel.test.ts` | 14 | **new infra** |
 | `src/sync.integration.test.ts` | 1 | **new — async select-loop coverage** |
 
-So 70 tests are direct 1:1 ports of the Rust suite, and 21 are new TypeScript
-tests (6 for `config`, 14 for `channel`, 1 sync integration).
+So 70 tests are direct 1:1 ports of the Rust suite, and 23 are new TypeScript
+tests (6 for `config`, 14 for `channel`, 1 sync integration, 2 for the
+dictionary-based Japanese romanizer — exact `taberu` / `arigatou` values).
 
 ### Why the new channel + sync integration tests
 
@@ -167,22 +168,41 @@ Two compile errors in `src/main.ts` broke `tsc` and `bun build`; both fixed:
 These are honest, specific divergences. Several are silent (not caught by the
 ported tests, because the Rust tests assert loose properties).
 
-1. **Japanese romaji: kakasi → any-ascii (kana exact, kanji approximate).** The
-   Rust `romanize_ja` (`src/romanize.rs:53-54`) is `kakasi::convert(text).romaji`
-   — a *dictionary / morphological* kanji→reading conversion (e.g. `食べる` →
-   `"taberu"`). No equivalent synchronous morphological analyzer exists in the Bun
-   stack used here, so the TS port (`romanizeJa`) transliterates **contiguous CJK
-   runs** together via `anyAscii`. For **kana** this reproduces kakasi exactly for
-   the common case — `ありがとう`→`"arigatou"`, `カタカナ`→`"katakana"`. For
-   **kanji**, any-ascii uses a context-free reading and capitalizes
-   (`食べる`→`"Shiberu"` vs kakasi `"taberu"`), so kanji-heavy lines still differ
-   from the original — this is the residual, inherent fidelity gap. (Earlier this
-   branch went through the per-code-point `romanizeGeneric` path, which produced
-   space-separated `"a ri ga to u"`; it was refined to per-run so kana matches
-   kakasi.) `ko` / `auto` still use `romanizeGeneric` (per-char any-ascii), and
-   `zh` still uses pinyin per Han ideograph with any-ascii only as the kana/hangul
-   fallback, so Chinese is closest to the original. The Rust `test_ja_*` tests only
-   assert "no kana remains / non-empty," which all implementations satisfy.
+1. **Japanese romaji: kakasi → kuromoji + wanakana (gap CLOSED).** The Rust
+   `romanize_ja` (`src/romanize.rs:53-54`) is `kakasi::convert(text).romaji` — a
+   *dictionary / morphological* kanji→reading conversion (e.g. `食べる` →
+   `"taberu"`). The TS port now matches this with a real morphological analyzer:
+   `@patdx/kuromoji` (a modern ESM/TS fork of kuromoji.js, the **IPADIC**
+   dictionary — the same engine class as kakasi) tokenizes the text and exposes
+   each token's katakana `.reading`, which `wanakana.toRomaji` (Hepburn) converts
+   to romaji. So **kanji now uses the real dictionary reading** (`食べる` →
+   `"taberu"`, not any-ascii's context-free `"Shiberu"`), and **kana matches
+   exactly** (`ありがとう` → `"arigatou"`, `カタカナ` → `"katakana"`). Tokens with
+   no reading (punctuation, latin/ASCII) keep their surface form, so non-CJK text
+   passes through verbatim. Design / cost:
+   - The kuromoji dictionary LOAD is async and one-time; `tokenizer.tokenize()` is
+     **synchronous**, so the public `romanize(text, lang): string` stays
+     synchronous. An idempotent `initRomanizer()` builds the tokenizer once and
+     caches it in module state; `romanizeJa` uses it when present and otherwise
+     **falls back** to the previous per-run `any-ascii` behavior, so nothing
+     breaks before init / if the dict is unavailable (init failures are swallowed,
+     never fatal).
+   - `initRomanizer()` is awaited in `main.ts` before the renderer starts, but
+     **only** when romanization is enabled and the language is `ja` or `auto`, so
+     the dictionary (~17MB gzipped `.dat.gz` on disk, ~96MB in RAM when loaded) is
+     never paid for by users who don't need it. The dict path is resolved from the
+     installed package via `import.meta.resolve("@patdx/kuromoji/package.json")`
+     (no hardcoded machine path).
+   - **Residual nuance:** an unknown kanji token with no IPADIC reading would fall
+     through to its surface form (CJK left in output), per the "keep surface form"
+     design; common vocabulary is covered by the dictionary and none of the tests
+     hit this. `ko` / `auto` still use `romanizeGeneric` (per-char any-ascii) —
+     `auto` therefore never actually invokes the tokenizer even when the dict is
+     loaded — and `zh` still uses pinyin per Han ideograph with any-ascii only as
+     the kana/hangul fallback. The Rust `test_ja_*` tests assert only "no kana
+     remains / non-empty"; two new tests assert the exact upgraded values
+     (`romanize("食べる","ja") === "taberu"`, `romanize("ありがとう","ja") ===
+     "arigatou"`), run against the real tokenizer via a `beforeAll(initRomanizer)`.
 
 2. **pinyin crate → pinyin-pro drift.** Polyphonic Han characters may map to
    different readings between the `pinyin` crate and `pinyin-pro`. Tests are
@@ -277,13 +297,15 @@ ported tests, because the Rust tests assert loose properties).
 
 ## 6. Could-not-be-faithfully-translated & follow-ups
 
-- **Japanese kanji morphological romanization (kakasi)** is the one item that
-  could **not** be faithfully translated. There is no equivalent synchronous
-  dictionary-based kanji→reading library in the Bun stack used here; per-run
-  `any-ascii` reproduces kana exactly but gives context-free (often incorrect)
-  kanji readings. Follow-up: integrate a
-  real Japanese romanizer (e.g. a kuromoji/kakasi-equivalent) behind the same
-  `romanize(text, "ja")` signature if accurate Japanese romaji matters.
+- **Japanese kanji morphological romanization (kakasi)** is now translated. It
+  was previously the one item that could not be reproduced — there was no
+  dictionary-based kanji→reading library wired into the Bun stack, so per-run
+  `any-ascii` gave context-free (often incorrect) kanji readings. That gap is
+  **closed**: `@patdx/kuromoji` (IPADIC, the same dictionary class as kakasi)
+  drives the readings and `wanakana` produces Hepburn romaji, behind the same
+  synchronous `romanize(text, "ja")` signature (the one-time dictionary load is
+  the only async step, done in `initRomanizer()` and lazily wired into `main.ts`
+  for `ja` / `auto`). See §5.1 for the full design and cost.
 
 - **CJK display-width centering** is implemented (width-aware centering via a
   hand-coded wide-character range table). Optional follow-up: align that table
@@ -301,7 +323,8 @@ ported tests, because the Rust tests assert loose properties).
 ---
 
 **Final status: GREEN** — `typecheck: pass`, `build: pass`,
-`bun test: 91 pass, 0 fail` (10 files, 189 `expect()` calls). The port is
-functionally complete and conforms to `PORT_SPEC.md`; the remaining items are
-the documented, intentional fidelity gaps above (chiefly Japanese romaji and
-CJK-width centering), none of which block the build, type-check, or test suite.
+`bun test: 93 pass, 0 fail` (10 files, 191 `expect()` calls). The port is
+functionally complete and conforms to `PORT_SPEC.md`; the Japanese romaji gap is
+now closed via `@patdx/kuromoji` + `wanakana` (§5.1), and the remaining items are
+the documented, intentional fidelity gaps above (chiefly CJK-width centering),
+none of which block the build, type-check, or test suite.

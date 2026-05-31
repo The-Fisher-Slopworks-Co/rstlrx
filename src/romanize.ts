@@ -1,8 +1,49 @@
 import { pinyin } from "pinyin-pro";
 import anyAscii from "any-ascii";
+import { TokenizerBuilder } from "@patdx/kuromoji";
+import NodeDictionaryLoader from "@patdx/kuromoji/node";
+import { toRomaji } from "wanakana";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 
 export type RomanizeMode = "off" | "inline" | "duplicate" | "current-only";
 export type RomanizeLang = "zh" | "ja" | "ko" | "auto";
+
+/// `Tokenizer` is not re-exported from the package entry, so derive its type
+/// from `TokenizerBuilder.build()`.
+type Tokenizer = Awaited<ReturnType<TokenizerBuilder["build"]>>;
+
+/// Module-level, lazily-initialized Japanese morphological tokenizer (kuromoji,
+/// IPADIC). Null until `initRomanizer` succeeds; `romanizeJa` falls back to the
+/// any-ascii per-run path while it is null (before init / if the dict is
+/// unavailable).
+let jaTokenizer: Tokenizer | null = null;
+
+/// Idempotently build the kuromoji tokenizer once and cache it. The IPADIC
+/// dictionary ships inside `@patdx/kuromoji` (`dict/*.dat.gz`); its path is
+/// resolved relative to the installed package (never a hardcoded machine path).
+/// Loading the dictionary is the one async step — `tokenizer.tokenize()` is
+/// synchronous — so `romanize`/`romanizeJa` stay synchronous. Failures are
+/// swallowed: on error the tokenizer stays null and `romanizeJa` uses the
+/// any-ascii fallback, so romanization never crashes the app.
+export async function initRomanizer(): Promise<void> {
+  if (jaTokenizer !== null) {
+    return;
+  }
+  try {
+    const pkgPath = fileURLToPath(
+      import.meta.resolve("@patdx/kuromoji/package.json"),
+    );
+    const dicPath = join(dirname(pkgPath), "dict");
+    const builder = new TokenizerBuilder({
+      loader: new NodeDictionaryLoader({ dic_path: dicPath }),
+    });
+    jaTokenizer = await builder.build();
+  } catch {
+    // Dictionary unavailable: keep the any-ascii fallback. Not fatal.
+    jaTokenizer = null;
+  }
+}
 
 /// CJK ranges identical to the Rust `is_cjk`.
 function isCjk(c: string): boolean {
@@ -82,12 +123,33 @@ function romanizeZh(text: string): string {
   return result;
 }
 
-/// Japanese: approximation of Rust's `romanize_ja` (kakasi). A morphological
-/// analyzer is not available, so contiguous CJK runs are transliterated together
-/// via any-ascii — kana joins without spaces ("ありがとう" -> "arigatou",
-/// matching kakasi for the common case); non-CJK text is preserved verbatim.
-/// Kanji readings are context-free (any-ascii), so they still differ from kakasi.
+/// Japanese: faithful to Rust's `romanize_ja` (kakasi). When the kuromoji
+/// tokenizer is loaded (via `initRomanizer`), tokenize the text and convert each
+/// token's katakana `.reading` to Hepburn romaji via wanakana — a dictionary /
+/// morphological kanji->reading conversion, same engine class as kakasi
+/// ("食べる" -> "taberu"). Tokens without a reading (punctuation, latin/ASCII)
+/// keep their surface form, so non-CJK text passes through verbatim.
+///
+/// Until the tokenizer is loaded (before init / if the dict is unavailable),
+/// fall back to the previous behavior: transliterate contiguous CJK runs via
+/// any-ascii (kana joins without spaces, matching kakasi for the common case);
+/// non-CJK text preserved verbatim.
 function romanizeJa(text: string): string {
+  if (jaTokenizer !== null) {
+    let result = "";
+    for (const token of jaTokenizer.tokenize(text)) {
+      const reading = token.reading;
+      if (reading !== undefined && reading !== "*") {
+        result += toRomaji(reading);
+      } else {
+        // Punctuation, latin, or an unreadable token: keep the surface form.
+        result += token.surface_form;
+      }
+    }
+    return result;
+  }
+
+  // Fallback (tokenizer not loaded): per-run any-ascii.
   let result = "";
   let run = "";
 

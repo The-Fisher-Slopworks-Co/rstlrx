@@ -1,5 +1,11 @@
-import { test, expect } from "bun:test";
-import { hasRomanizable, romanize } from "./romanize";
+import { test, expect, beforeAll } from "bun:test";
+import { hasRomanizable, romanize, initRomanizer } from "./romanize";
+
+// Load the real kuromoji tokenizer once so the `ja` tests exercise the
+// dictionary-based (morphological) path rather than the any-ascii fallback.
+beforeAll(async () => {
+  await initRomanizer();
+});
 
 function containsChar(s: string, c: string): boolean {
   return s.includes(c);
@@ -82,6 +88,19 @@ test("test_ja_kanji", () => {
 test("test_ja_preserves_latin", () => {
   const result = romanize("hello world", "ja");
   expect(result).toEqual("hello world");
+});
+
+// --- Japanese: dictionary-based (kuromoji + wanakana Hepburn) exact values ---
+// These prove the upgrade over the any-ascii fallback: kanji now uses the real
+// dictionary reading ("食べる" -> "taberu", not any-ascii's "Shiberu"), and kana
+// matches kakasi exactly. They require the tokenizer loaded in beforeAll.
+
+test("test_ja_kanji_verb_dictionary_reading", () => {
+  expect(romanize("食べる", "ja")).toEqual("taberu");
+});
+
+test("test_ja_hiragana_exact", () => {
+  expect(romanize("ありがとう", "ja")).toEqual("arigatou");
 });
 
 // --- Korean ---
