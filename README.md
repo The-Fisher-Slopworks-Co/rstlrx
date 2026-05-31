@@ -27,7 +27,7 @@ This was a Rust project. The borrow checker introduced unpredictable latency spi
 
 rstlrx now solves this with a single-binary runtime, structural typing, and a garbage collector that runs whenever it feels like it. Every state transition is a plain object. Every concurrent access is a `Promise.race`. If `tsc` is happy, it probably works.
 
-(It is the same program. Synced lyrics, romanization, queue merge — all preserved. See [`MIGRATION_REPORT.md`](./MIGRATION_REPORT.md) for the Rust → TypeScript migration details and known fidelity gaps.)
+(It is the same program. Synced lyrics, romanization, queue merge — all preserved. See [`docs/MIGRATION_REPORT.md`](./docs/MIGRATION_REPORT.md) for the Rust → TypeScript migration details and known fidelity gaps.)
 
 ## Setup
 
