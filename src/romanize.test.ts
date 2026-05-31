@@ -103,6 +103,46 @@ test("test_ja_hiragana_exact", () => {
   expect(romanize("ありがとう", "ja")).toEqual("arigatou");
 });
 
+// --- Japanese: POS-aware word spacing (restored from kakasi's behavior) ---
+// kuromoji tokenizes into morphemes (finer than words), so naive per-token
+// joining either runs words together (no spacing) or over-segments inflections.
+// The romanizer groups each independent word with the inflections/auxiliaries
+// that attach to it, joins groups with a single space, and converts each group's
+// katakana run as a whole (preserving sokuon at token boundaries). Values below
+// are the exact observed outputs of the real kuromoji + wanakana pipeline.
+
+test("test_ja_multiword_has_space", () => {
+  // Multi-word input must be SPACE-SEPARATED, not run together as
+  // "konnichihasekai" (the bug this fix addresses).
+  const result = romanize("こんにちは世界", "ja");
+  expect(result.includes(" ")).toBe(true);
+  expect(result).toEqual("konnichiha sekai");
+});
+
+test("test_ja_inflection_not_oversegmented", () => {
+  // A single inflected verb must stay ONE word: "tabemashita", not
+  // "tabe mashi ta" (auxiliaries まし/た attach to the verb stem).
+  expect(romanize("食べました", "ja")).toEqual("tabemashita");
+});
+
+test("test_ja_sokuon_across_token_boundary", () => {
+  // 走っ ("ハシッ") + て ("テ"): per-token conversion would drop the trailing
+  // small ッ ("hashi" + "te" = "hashite"); converting the joined reading
+  // preserves the gemination -> "hashitte".
+  expect(romanize("走って", "ja")).toEqual("hashitte");
+  expect(romanize("会いたかった", "ja")).toEqual("aitakatta");
+});
+
+test("test_ja_sentence_word_spacing", () => {
+  // Full sentence: words spaced, punctuation attached (no space before "。").
+  expect(romanize("私は学生です。", "ja")).toEqual("watashi ha gakusei desu.");
+});
+
+test("test_ja_mixed_latin_preserved_with_spacing", () => {
+  // Latin text passes through verbatim; the Japanese word is spaced from it.
+  expect(romanize("I love 君", "ja")).toEqual("I love kimi");
+});
+
 // --- Korean ---
 
 test("test_ko_hangul", () => {

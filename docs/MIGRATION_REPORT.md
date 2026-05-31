@@ -1,6 +1,6 @@
 # rstlrx — Rust → TypeScript/Bun Migration Report
 
-Status: **GREEN** — typecheck pass, build pass, `bun test` 93 pass / 0 fail.
+Status: **GREEN** — typecheck pass, build pass, `bun test` 101 pass / 0 fail.
 
 ## 1. Overview
 
@@ -44,7 +44,7 @@ bun run src/main.ts [--style-current bold --color-current "#ff5500" --romanize i
 
 Verification outcome (reproduced during this report): `typecheck` exits 0;
 `build` bundles 28 modules into `dist/main.js` (~1.47 MB); `bun test` reports
-`93 pass, 0 fail` across 10 files (191 `expect()` calls).
+`101 pass, 0 fail` across 10 files (204 `expect()` calls).
 
 ## 2. File mapping (every Rust file → TS file)
 
@@ -99,7 +99,7 @@ constructors translated to the TS data model (`Line{time_ms,words}` →
 `Color::Rgb/Indexed/Red` → structural `{type,...}` objects; `Style::default()` →
 `{bold,italic,underline,dim,fg}`). `assert_eq!` → `toEqual`, `assert!` → `toBe`.
 
-Final result: **`bun test` → 93 pass, 0 fail (10 files, 191 `expect()` calls).**
+Final result: **`bun test` → 101 pass, 0 fail (10 files, 204 `expect()` calls).**
 
 Per-file porting tally:
 
@@ -110,15 +110,17 @@ Per-file porting tally:
 | `src/player/spotify/index.test.ts` | 6 | ported from `player/spotify/mod.rs` (6) |
 | `src/renderer/tui/index.test.ts` | 7 | ported from `renderer/tui/mod.rs` (7) |
 | `src/renderer/tui/style.test.ts` | 16 | ported from `renderer/tui/style.rs` (16) |
-| `src/romanize.test.ts` | 17 | 15 ported from `romanize.rs` (15) + 2 new (kuromoji exact-value) |
+| `src/romanize.test.ts` | 23 | 15 ported from `romanize.rs` (15) + 8 new (kuromoji exact-value + POS-aware word spacing) |
 | `src/sync.test.ts` | 12 | ported from `sync.rs` (12) |
 | `src/config.test.ts` | 6 | **new** (Rust `config.rs` had no `#[test]`) |
 | `src/channel.test.ts` | 14 | **new infra** |
 | `src/sync.integration.test.ts` | 1 | **new — async select-loop coverage** |
 
-So 70 tests are direct 1:1 ports of the Rust suite, and 23 are new TypeScript
-tests (6 for `config`, 14 for `channel`, 1 sync integration, 2 for the
-dictionary-based Japanese romanizer — exact `taberu` / `arigatou` values).
+So 70 tests are direct 1:1 ports of the Rust suite, and 29 are new TypeScript
+tests (6 for `config`, 14 for `channel`, 1 sync integration, 8 for the
+dictionary-based Japanese romanizer — 2 exact `taberu` / `arigatou` values plus
+6 locking in POS-aware word spacing: multi-word spacing, no inflection
+over-segmentation, sokuon at token boundaries, sentence spacing, latin mixed).
 
 ### Why the new channel + sync integration tests
 
@@ -168,18 +170,46 @@ Two compile errors in `src/main.ts` broke `tsc` and `bun build`; both fixed:
 These are honest, specific divergences. Several are silent (not caught by the
 ported tests, because the Rust tests assert loose properties).
 
-1. **Japanese romaji: kakasi → kuromoji + wanakana (gap CLOSED).** The Rust
-   `romanize_ja` (`src/romanize.rs:53-54`) is `kakasi::convert(text).romaji` — a
-   *dictionary / morphological* kanji→reading conversion (e.g. `食べる` →
-   `"taberu"`). The TS port now matches this with a real morphological analyzer:
-   `@patdx/kuromoji` (a modern ESM/TS fork of kuromoji.js, the **IPADIC**
-   dictionary — the same engine class as kakasi) tokenizes the text and exposes
-   each token's katakana `.reading`, which `wanakana.toRomaji` (Hepburn) converts
-   to romaji. So **kanji now uses the real dictionary reading** (`食べる` →
+1. **Japanese romaji: kakasi → kuromoji + wanakana (gap CLOSED, with word
+   spacing restored).** The Rust `romanize_ja` (`src/romanize.rs:53-54`) is
+   `kakasi::convert(text).romaji` — a *dictionary / morphological* kanji→reading
+   conversion that **inserts spaces between words** (e.g.
+   `kakasi::convert("こんにちは世界！").romaji == "konnichiha sekai!"`). The TS port
+   now matches both the readings and the spacing with a real morphological
+   analyzer: `@patdx/kuromoji` (a modern ESM/TS fork of kuromoji.js, the
+   **IPADIC** dictionary — the same engine class as kakasi) tokenizes the text and
+   exposes each token's katakana `.reading`, which `wanakana.toRomaji` (Hepburn)
+   converts to romaji. So **kanji now uses the real dictionary reading** (`食べる` →
    `"taberu"`, not any-ascii's context-free `"Shiberu"`), and **kana matches
    exactly** (`ありがとう` → `"arigatou"`, `カタカナ` → `"katakana"`). Tokens with
    no reading (punctuation, latin/ASCII) keep their surface form, so non-CJK text
-   passes through verbatim. Design / cost:
+   passes through verbatim.
+   - **Word spacing (POS-aware token joining).** kuromoji tokenizes into
+     *morphemes* (finer than words), so a naive join of every token's romaji
+     either runs words together (`"konnichihasekai"`) or over-segments
+     inflections (`食べました` → `"tabe mashi ta"`). The romanizer instead walks the
+     tokens and **groups each independent word with the inflections / auxiliaries
+     that attach to it**, joining groups with a single space. A token attaches
+     (takes no leading space) when its `pos` is `助動詞` (auxiliary verb) or `記号`
+     (symbol/punctuation), or its `pos_detail_1` is `非自立` (non-independent),
+     `接尾` (suffix), or `接続助詞` (conjunctive particle); everything else —
+     nouns 名詞, verb stems 動詞, adjectives, adverbs, regular particles 助詞 —
+     starts a new word. This restores kakasi-style readability:
+     `こんにちは世界` → `"konnichiha sekai"`, `私は学生です。` →
+     `"watashi ha gakusei desu."`, while keeping `食べました` → `"tabemashita"`,
+     `食べている` → `"tabeteiru"`, `愛してる` → `"aishiteru"` as single words.
+     The output is **correct and readable** (proper word spacing); it is not
+     byte-for-byte identical to kakasi (e.g. romanization of は as `ha` vs `wa`,
+     and exact word boundaries depend on IPADIC) — parity with kakasi's bytes was
+     never a requirement, readability was.
+   - **Sokuon / long-vowel at token boundaries.** Per-token romaji conversion
+     drops a small っ (sokuon) that lands at the end of a token — kuromoji reads
+     `走っ` as `ハシッ`, which `wanakana.toRomaji` alone renders `"hashi"`, losing
+     the gemination. To avoid this, each word group accumulates its tokens'
+     **katakana readings into one contiguous run** and converts the whole run at
+     once, so `ハシッ`+`テ` → `"hashitte"` (not `"hashi"+"te" = "hashite"`) and
+     `会いたかった` → `"aitakatta"` (not `"aitakata"`).
+   Design / cost:
    - The kuromoji dictionary LOAD is async and one-time; `tokenizer.tokenize()` is
      **synchronous**, so the public `romanize(text, lang): string` stays
      synchronous. An idempotent `initRomanizer()` builds the tokenizer once and
@@ -305,7 +335,12 @@ ported tests, because the Rust tests assert loose properties).
   drives the readings and `wanakana` produces Hepburn romaji, behind the same
   synchronous `romanize(text, "ja")` signature (the one-time dictionary load is
   the only async step, done in `initRomanizer()` and lazily wired into `main.ts`
-  for `ja` / `auto`). See §5.1 for the full design and cost.
+  for `ja` / `auto`). kakasi's **word spacing** is also restored via POS-aware
+  token joining (independent words spaced, inflections / auxiliaries / suffixes
+  kept attached), and sokuon / long vowels at token boundaries are preserved by
+  converting each word group's katakana run as a whole. The result is correct and
+  readable (proper word spacing), not byte-for-byte identical to kakasi — byte
+  parity was never required. See §5.1 for the full design and cost.
 
 - **CJK display-width centering** is implemented (width-aware centering via a
   hand-coded wide-character range table). Optional follow-up: align that table
@@ -323,8 +358,9 @@ ported tests, because the Rust tests assert loose properties).
 ---
 
 **Final status: GREEN** — `typecheck: pass`, `build: pass`,
-`bun test: 93 pass, 0 fail` (10 files, 191 `expect()` calls). The port is
+`bun test: 101 pass, 0 fail` (10 files, 204 `expect()` calls). The port is
 functionally complete and conforms to `PORT_SPEC.md`; the Japanese romaji gap is
-now closed via `@patdx/kuromoji` + `wanakana` (§5.1), and the remaining items are
-the documented, intentional fidelity gaps above (chiefly CJK-width centering),
-none of which block the build, type-check, or test suite.
+now closed via `@patdx/kuromoji` + `wanakana` (§5.1) — including kakasi-style
+word spacing restored through POS-aware token joining — and the remaining items
+are the documented, intentional fidelity gaps above (chiefly CJK-width
+centering), none of which block the build, type-check, or test suite.
