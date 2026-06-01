@@ -1,1 +1,16 @@
-/target
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Bun standalone-compiled binaries
+/rstlrx
+/rstlrx-*
+*.tgz
+
+# Logs
+*.log
+
+# OS / editor
+.DS_Store

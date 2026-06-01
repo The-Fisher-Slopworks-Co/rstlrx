@@ -1,6 +1,6 @@
 # rstlrx
 
-🚀🚀🚀 A blazingly fast, memory-safe, lightweight Spotify lyrics viewer for your terminal. 🚀🚀🚀
+🚀🚀🚀 A blazingly fast, garbage-collected, lightweight Spotify lyrics viewer for your terminal. 🚀🚀🚀
 
 <p align="center">
   <img src="./demo.gif" width="450"/><br>
@@ -13,7 +13,7 @@ rstlrx --romanize current-only --romanize-lang ja --padding-before 1 --padding-a
 
 ## What's new compared to sptlrx
 
-This is a Rust port of [sptlrx](https://github.com/raitonoberu/sptlrx). The original doesn't have:
+This is a TypeScript/Bun port of [sptlrx](https://github.com/raitonoberu/sptlrx). The original doesn't have:
 
 - **CJK romanization** (`--romanize`). Chinese pinyin, Japanese romaji, Korean romanization. Four modes: replace in place, add a line below, show only for the current line, or off. For when you want to sing along but can't read the characters.
 - **Queue merge** (`--merge-queue`). Lyrics from the next track appear below the current song, so you get one continuous scroll.
@@ -21,24 +21,42 @@ This is a Rust port of [sptlrx](https://github.com/raitonoberu/sptlrx). The orig
 
 Everything else is in `rstlrx --help`.
 
-## Why Rust
+## Why TypeScript
 
-The Go garbage collector introduces unpredictable latency spikes during terminal rendering, and its goroutine scheduler lacks the guarantees needed for precise lyric synchronization. Reasoning about state transitions in a concurrent polling loop without a strong type system is hard.
+This was a Rust project. The borrow checker introduced unpredictable latency spikes during development, and its trait-resolution scheduler lacked the guarantees needed for shipping features this decade. Reasoning about a 200-line async polling loop without a REPL is hard.
 
-rstlrx solves this with zero-cost abstractions, fearless concurrency, and compile-time correctness. Every state transition is encoded in the type system. Every concurrent access is verified by the borrow checker. If it compiles, it works.
+rstlrx now solves this with a single-binary runtime, structural typing, and a garbage collector that runs whenever it feels like it. Every state transition is a plain object. Every concurrent access is a `Promise.race`. If `tsc` is happy, it probably works.
+
+(It is the same program. Synced lyrics, romanization, queue merge — all preserved. See [`docs/MIGRATION_REPORT.md`](./docs/MIGRATION_REPORT.md) for the Rust → TypeScript migration details and known fidelity gaps.)
 
 ## Setup
 
-You need a Spotify app. Go to [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard), create an app, set the redirect URI to `http://127.0.0.1:8888/callback`.
+You need [Bun](https://bun.sh) and a Spotify app. Go to [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard), create an app, set the redirect URI to `http://127.0.0.1:8888/callback`.
 
 ```bash
 git clone https://github.com/txssu/rstlrx
 cd rstlrx
-cargo install --path .
-rstlrx login --client-id YOUR_CLIENT_ID --client-secret YOUR_CLIENT_SECRET
+bun install
+bun run src/main.ts login --client-id YOUR_CLIENT_ID --client-secret YOUR_CLIENT_SECRET
 ```
 
-Then play something on Spotify and run `rstlrx`.
+Then play something on Spotify and run `bun run src/main.ts` (or `bun start`).
+
+To install a global `rstlrx` command, either `bun link` in the repo, or compile a standalone binary:
+
+```bash
+bun build ./src/main.ts --compile --outfile rstlrx
+./rstlrx --help
+```
+
+## Development
+
+```bash
+bun install        # install dependencies
+bun test           # run the test suite
+bunx tsc --noEmit  # type-check
+bun run build      # bundle to dist/
+```
 
 ## Credits
 
