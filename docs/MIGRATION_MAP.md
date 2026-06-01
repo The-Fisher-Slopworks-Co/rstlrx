@@ -41,7 +41,7 @@ Legend: **pub** = Rust `pub`; **priv→exp** = private in Rust, promoted to expo
 | `enum RomanizeLang` (Zh/Ja/Ko/Auto) | pub | `type RomanizeLang = "zh"|"ja"|"ko"|"auto"` (default `"auto"`) |
 | `has_romanizable()` | pub | `hasRomanizable(text): boolean` |
 | `romanize()` | pub | `romanize(text, lang): string` |
-| `is_cjk()`, `romanize_ja/_zh/_generic()` | priv | internal helpers; ranges identical; `kakasi`-backed `romanize_ja` ported to `@patdx/kuromoji` + `wanakana` with POS-aware word spacing (gap §4 — RESOLVED; see MIGRATION_REPORT §5.1) |
+| `is_cjk()`, `romanize_ja/_zh/_generic()` | priv | internal helpers; ranges identical; `kakasi`-backed `romanize_ja` ported to `@patdx/kuromoji` + `wanakana` with POS-aware word spacing (gap §4 — RESOLVED; see MIGRATION_REPORT §5.1). New helpers `hasKana()` + `romanizeAuto()`: `auto` detects Japanese by kana and uses the `ja` dictionary path (`[improve ✓]`) |
 
 ### `src/sync.rs` → `ts/src/sync.ts`
 | Rust item | Vis | TS target |
@@ -206,7 +206,10 @@ See MIGRATION_REPORT §5/§6 for the per-item detail and the recommended improve
    `wanakana.toRomaji` (Hepburn) for kana — plus POS-aware token joining that
    restores kakasi-style word spacing (`こんにちは世界`→`"konnichiha sekai"`) while
    keeping inflections glued (`食べました`→`"tabemashita"`). `any-ascii` remains the
-   `ko`/`auto` path and the fallback before the dictionary loads. Output is correct
+   `ko` path and the fallback before the dictionary loads; **`auto` now detects
+   Japanese by kana** and routes kana-bearing text through the dictionary `ja` path
+   (`食べる`→`"taberu"`), keeping ambiguous pure-Han on the generic any-ascii path
+   (`你好`→`"Ni Hao"`) — `[improve ✓]`, see MIGRATION_REPORT §5.1. Output is correct
    and readable, not byte-identical to kakasi (byte parity was never required). See
    MIGRATION_REPORT §5.1 for the full design and cost (~17MB dict on disk, ~96MB in
    RAM, lazy-loaded only for `ja`/`auto`).
@@ -224,11 +227,13 @@ See MIGRATION_REPORT §5/§6 for the per-item detail and the recommended improve
    best-effort and explicitly *not asserted* by tests. The full draw/layout/alt-screen path is hand-
    rolled and untested; risk of escape-sequence / restore-on-panic differences.
 
-5. `[cosmetic]` + `[improve]` **clap → parseArgs nuances.** Must hand-implement: `--help`/`-h` text + exit 0; usage errors
+5. `[cosmetic]` + `[improve ✓]` **clap → parseArgs nuances.** Must hand-implement: `--help`/`-h` text + exit 0; usage errors
    (unknown flag, invalid enum value, missing required `login` arg) → stderr + exit **2**; enum value
    validation (`romanize`, `romanize-lang`); `u16`/`usize` numeric parsing & range. `parseArgs` does
-   none of this for free. Help/error wording is `[cosmetic]`; the `u16`/`usize` range is `[improve]` —
-   `--port` must reject values > 65535 (a port can't exceed it), so match clap (MIGRATION_REPORT §6a).
+   none of this for free. Help/error wording is `[cosmetic]`; the `u16`/`usize` range was `[improve]` —
+   **RESOLVED:** `parseNumber` now enforces a `max` bound, so `--port` rejects values > 65535
+   (clap `u16`) and the paddings are bounded (`Number.MAX_SAFE_INTEGER`, the JS-representable `usize`
+   ceiling); out-of-range → stderr + exit 2 (MIGRATION_REPORT §5.3, covered by `main.test.ts`).
 
 6. `[cosmetic]` **anyhow error-chain formatting.** Top-level must print `Error: <message>` then `Caused by:`
    lines walking the `{ cause }` chain, to stderr, exit 1 — mirroring anyhow's `{:?}` Debug output.

@@ -67,10 +67,18 @@ function parseRomanizeLang(value: string): RomanizeLang {
   );
 }
 
-function parseNumber(value: string, flag: string): number {
+// `max` mirrors clap's integer value-parser ranges: `--port` is a `u16`
+// (0..=65535), the paddings are `usize`. JS `Number` cannot faithfully represent
+// the full `usize` range, so paddings use `Number.MAX_SAFE_INTEGER` as the
+// practical ceiling (the value is "number of empty lines" — the exact bound never
+// matters). The `: <v> is not in 0..=<max>` suffix approximates clap's range
+// message (cosmetic; not byte-identical).
+function parseNumber(value: string, flag: string, max: number): number {
   const n = Number(value);
-  if (!Number.isInteger(n) || n < 0) {
-    throw new UsageError(`invalid value '${value}' for '${flag}'`);
+  if (!Number.isInteger(n) || n < 0 || n > max) {
+    throw new UsageError(
+      `invalid value '${value}' for '${flag}': ${value} is not in 0..=${max}`,
+    );
   }
   return n;
 }
@@ -107,7 +115,9 @@ async function runLogin(argv: string[]): Promise<void> {
   }
 
   const port =
-    values.port === undefined ? 8888 : parseNumber(values.port, "--port <port>");
+    values.port === undefined
+      ? 8888
+      : parseNumber(values.port, "--port <port>", 65535);
 
   await SpotifyAuth.loginFlow(clientId, clientSecret, port);
 }
@@ -152,11 +162,19 @@ async function runDefault(argv: string[]): Promise<void> {
   const cliPaddingBefore =
     values["padding-before"] === undefined
       ? undefined
-      : parseNumber(values["padding-before"], "--padding-before <padding_before>");
+      : parseNumber(
+          values["padding-before"],
+          "--padding-before <padding_before>",
+          Number.MAX_SAFE_INTEGER,
+        );
   const cliPaddingAfter =
     values["padding-after"] === undefined
       ? undefined
-      : parseNumber(values["padding-after"], "--padding-after <padding_after>");
+      : parseNumber(
+          values["padding-after"],
+          "--padding-after <padding_after>",
+          Number.MAX_SAFE_INTEGER,
+        );
 
   const stored = loadConfig();
 

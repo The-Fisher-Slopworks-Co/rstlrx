@@ -162,6 +162,23 @@ test("test_auto_romanizes_cjk", () => {
   expect(containsChar(result, "你")).toBe(false);
 });
 
+// `auto` detects Japanese (kana present) and uses the kuromoji dictionary path,
+// so kanji gets its real reading ("食べる" -> "taberu") instead of the weak
+// per-char any-ascii the Rust original used for `auto`. Matches explicit `ja`.
+test("test_auto_uses_ja_dictionary_for_kana", () => {
+  expect(romanize("食べる", "auto")).toEqual("taberu");
+  expect(romanize("ありがとう", "auto")).toEqual("arigatou");
+});
+
+// Pure-Han text (no kana) cannot be disambiguated as Chinese vs. Japanese, so
+// `auto` keeps it on the generic any-ascii path rather than the JA tokenizer
+// (which has no reading for Chinese-only ideographs). It must still romanize.
+test("test_auto_pure_han_stays_generic", () => {
+  const result = romanize("你好", "auto");
+  expect(containsChar(result, "你")).toBe(false);
+  expect(containsChar(result, "好")).toBe(false);
+});
+
 // --- No leading/trailing spaces ---
 
 test("test_no_leading_space", () => {

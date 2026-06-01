@@ -92,8 +92,43 @@ export function romanize(text: string, lang: RomanizeLang): string {
     case "ko":
       return romanizeGeneric(text);
     case "auto":
-      return romanizeGeneric(text);
+      return romanizeAuto(text);
   }
+}
+
+/// Hiragana (U+3040–U+309F) or katakana (U+30A0–U+30FF) — the kana ranges already
+/// in `isCjk`. Presence of kana is a definitive Japanese signal (kana has no
+/// non-Japanese use), which is what `romanizeAuto` keys off.
+function hasKana(text: string): boolean {
+  for (const c of text) {
+    const cp = c.codePointAt(0);
+    if (cp === undefined) {
+      continue;
+    }
+    if ((cp >= 0x3040 && cp <= 0x309f) || (cp >= 0x30a0 && cp <= 0x30ff)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// Auto: detect Japanese and use the dictionary path, so `auto` is at least as
+/// correct as explicit `ja` for the common case. The Rust original routed `auto`
+/// entirely through per-char any-ascii (`romanize_generic`), which left kanji as
+/// weak context-free transliterations; this is the `[improve]` upgrade.
+///
+/// Detection keys on *kana*, not all CJK, and this is load-bearing: pure-Han text
+/// cannot be disambiguated as Chinese vs. Japanese, and routing it through the JA
+/// tokenizer is actively wrong (kuromoji/IPADIC has no reading for Chinese-only
+/// ideographs, so `romanizeJa("你好")` keeps `你` and mis-reads `好`). So only
+/// kana-bearing text (unambiguously Japanese) takes the dictionary path; kanji-only
+/// and other CJK stay on the generic any-ascii path, preserving the previous `auto`
+/// behavior for Chinese/Korean.
+function romanizeAuto(text: string): string {
+  if (hasKana(text)) {
+    return romanizeJa(text);
+  }
+  return romanizeGeneric(text);
 }
 
 /// Chinese: pinyin per Han ideograph, any-ascii fallback for other CJK.

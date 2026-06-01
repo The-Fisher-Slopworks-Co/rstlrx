@@ -1,6 +1,6 @@
 # rstlrx — Rust → TypeScript/Bun Migration Report
 
-Status: **GREEN** — typecheck pass, build pass, `bun test` 98 pass / 0 fail.
+Status: **GREEN** — typecheck pass, build pass, `bun test` 101 pass / 0 fail.
 
 > **Guiding principle — functional identity over byte-identity.** This port aims
 > for *functional* identity with the Rust crate, not byte-for-byte output. The
@@ -58,7 +58,7 @@ bun run src/main.ts [--style-current bold --color-current "#ff5500" --romanize i
 
 Verification outcome (reproduced during this report): `typecheck` exits 0;
 `build` bundles 28 modules into `dist/main.js` (~1.48 MB); `bun test` reports
-`98 pass, 0 fail` across 10 files (198 `expect()` calls).
+`101 pass, 0 fail` across 11 files (204 `expect()` calls).
 
 ## 2. File mapping (every Rust file → TS file)
 
@@ -113,7 +113,7 @@ constructors translated to the TS data model (`Line{time_ms,words}` →
 `Color::Rgb/Indexed/Red` → structural `{type,...}` objects; `Style::default()` →
 `{bold,italic,underline,dim,fg}`). `assert_eq!` → `toEqual`, `assert!` → `toBe`.
 
-Final result: **`bun test` → 98 pass, 0 fail (10 files, 198 `expect()` calls).**
+Final result: **`bun test` → 101 pass, 0 fail (11 files, 204 `expect()` calls).**
 
 Per-file porting tally:
 
@@ -124,17 +124,20 @@ Per-file porting tally:
 | `src/player/spotify/index.test.ts` | 6 | ported from `player/spotify/mod.rs` (6) |
 | `src/renderer/tui/index.test.ts` | 7 | ported from `renderer/tui/mod.rs` (7) |
 | `src/renderer/tui/style.test.ts` | 16 | ported from `renderer/tui/style.rs` (16) |
-| `src/romanize.test.ts` | 22 | 15 ported from `romanize.rs` (15) + 7 new (kuromoji exact-value + POS-aware word spacing) |
+| `src/romanize.test.ts` | 24 | 15 ported from `romanize.rs` (15) + 9 new (kuromoji exact-value + POS-aware word spacing + auto→JA dictionary) |
 | `src/sync.test.ts` | 12 | ported from `sync.rs` (12) |
 | `src/config.test.ts` | 6 | **new** (Rust `config.rs` had no `#[test]`) |
 | `src/channel.test.ts` | 14 | **new infra** |
 | `src/sync.integration.test.ts` | 1 | **new — async select-loop coverage** |
+| `src/main.test.ts` | 1 | **new — CLI `--port` u16-range rejection (subprocess)** |
 
-So 70 tests are direct 1:1 ports of the Rust suite, and 28 are new TypeScript
-tests (6 for `config`, 14 for `channel`, 1 sync integration, 7 for the
-dictionary-based Japanese romanizer — 2 exact `taberu` / `arigatou` values plus
-5 locking in POS-aware word spacing: multi-word spacing, no inflection
-over-segmentation, sokuon at token boundaries, sentence spacing, latin mixed).
+So 70 tests are direct 1:1 ports of the Rust suite, and 31 are new TypeScript
+tests (6 for `config`, 14 for `channel`, 1 sync integration, 1 CLI port-range,
+9 for the dictionary-based Japanese romanizer — 2 exact `taberu` / `arigatou`
+values, 5 locking in POS-aware word spacing (multi-word spacing, no inflection
+over-segmentation, sokuon at token boundaries, sentence spacing, latin mixed),
+plus 2 for `auto` routing kana-bearing text through the JA dictionary path while
+keeping pure-Han on the generic path).
 
 ### Why the new channel + sync integration tests
 
@@ -260,16 +263,26 @@ the technical facts beneath each are unchanged.
    - **Residual nuance:** an unknown kanji token with no IPADIC reading would fall
      through to its surface form (CJK left in output), per the "keep surface form"
      design; common vocabulary is covered by the dictionary and none of the tests
-     hit this. `ko` / `auto` still use `romanizeGeneric` (per-char any-ascii) —
-     `auto` therefore never actually invokes the tokenizer even when the dict is
-     loaded. **`[improve]`** — `auto` is meant to handle Japanese, but routes JA
-     text through the weaker generic path instead of the now-correct `ja`
-     tokenizer; "do it right" says `auto` should detect Japanese and use the
-     dictionary path (tracked in §6). `zh` still uses pinyin per Han ideograph
-     with any-ascii only as the kana/hangul fallback. The Rust `test_ja_*` tests assert only "no kana
-     remains / non-empty"; two new tests assert the exact upgraded values
+     hit this. **`[improve ✓ — done]` `auto` now uses the JA dictionary path for
+     Japanese.** `auto` previously routed everything through `romanizeGeneric`
+     (per-char any-ascii) and never invoked the tokenizer; it now detects Japanese
+     by the presence of **kana** (hiragana/katakana) and routes kana-bearing text
+     through `romanizeJa`, so `auto` is at least as correct as explicit `ja` for the
+     common case (`romanize("食べる","auto") === "taberu"`). Detection keys on kana,
+     **not** all CJK, and this is load-bearing: pure-Han text cannot be
+     disambiguated as Chinese vs. Japanese, and kuromoji/IPADIC has no reading for
+     Chinese-only ideographs (`romanizeJa("你好")` keeps `你` and mis-reads `好`), so
+     kanji-only / other-CJK text stays on the generic any-ascii path — preserving
+     the previous `auto` behavior for Chinese (`你好` → `"Ni Hao"`). The one
+     remaining limitation is kanji-only Japanese with no kana (e.g. `食事`), which
+     `auto` cannot tell apart from Chinese and so leaves on the generic path; use
+     explicit `--romanize-lang ja` for that. `ko` still uses `romanizeGeneric`;
+     `zh` still uses pinyin per Han ideograph with any-ascii only as the
+     kana/hangul fallback. The Rust `test_ja_*` tests assert only "no kana
+     remains / non-empty"; new tests assert the exact upgraded values
      (`romanize("食べる","ja") === "taberu"`, `romanize("ありがとう","ja") ===
-     "arigatou"`), run against the real tokenizer via a `beforeAll(initRomanizer)`.
+     "arigatou"`, and the same via `auto`), run against the real tokenizer via a
+     `beforeAll(initRomanizer)`.
 
 2. `[cosmetic]` **pinyin crate → pinyin-pro drift.** Polyphonic Han characters may
    map to different readings between the `pinyin` crate and `pinyin-pro`, but both
@@ -301,11 +314,15 @@ the technical facts beneath each are unchanged.
      character-identical to clap's.
    - Enum validation for `--romanize` / `--romanize-lang` and numeric range for
      `--port` (clap `u16`) / paddings (clap `usize`) is done manually; `parseArgs`
-     does none of this. **`[improve]`** — `--port` currently accepts any
-     non-negative integer, whereas clap's `u16` rejects values > 65535. A TCP port
-     genuinely cannot exceed 65535, so the Rust original is the more-correct one
-     here; "do it right" says add the `0..=65535` bound (tracked in §6), rather
-     than treat the looser behavior as an acceptable divergence.
+     does none of this. **`[improve ✓ — done]`** — `parseNumber` now takes a `max`
+     bound: `--port` is bounded to `0..=65535` (clap's `u16` — a TCP port cannot
+     exceed 65535), and the `usize` paddings to `Number.MAX_SAFE_INTEGER` (JS
+     `Number` cannot faithfully represent the full `usize` range, and "number of
+     empty lines" never needs more — so the safe-integer ceiling is the practical
+     bound). An out-of-range value prints `error: invalid value '<v>' for
+     '<flag>': <v> is not in 0..=<max>` to stderr and exits 2, matching clap's
+     reject-and-exit-2 contract (the message wording is `[cosmetic]`, close to but
+     not byte-identical to clap's).
 
 4. `[cosmetic]` **anyhow error-chain formatting.** Runtime failures print `Error: <message>`
    to stderr, then (if a `cause` chain exists) a `Caused by:` block walking the
@@ -371,24 +388,21 @@ the technical facts beneath each are unchanged.
 
 ## 6. Follow-ups
 
-Grouped by the guiding principle. The first group is the one that matters per "do
-it right" — places where the Rust original is functionally *more correct* and the
-port should match it (not excuse the difference). The other two groups are
+Grouped by the guiding principle. The first group — the `[improve]` items where the
+Rust original is functionally *more correct* — is now **empty: both have been
+closed** (see "Closed during the port" below). The remaining two groups are
 optional: cosmetic parity that nothing depends on, and untested surfaces.
 
 ### 6a. Recommended improvements (`[improve]` — do it right)
 
-These are not "acceptable divergences" — the original is the more-correct one, so
-matching it (or going further) is the right call when these surfaces are touched.
+**None outstanding.** Both previously-tracked `[improve]` items are done:
 
-- **`--port` should reject values > 65535.** A TCP port cannot exceed 65535; clap's
-  `u16` enforces this, the port currently accepts any non-negative integer. Add the
-  `0..=65535` bound (and, alongside it, the `usize` paddings range). (§5.3)
-- **`auto` should use the Japanese dictionary path.** `--romanize-lang auto` is
-  meant to handle Japanese, but routes JA text through the weaker generic
-  `any-ascii` path instead of the now-correct kuromoji + wanakana `ja` path. Make
-  `auto` detect Japanese (kana/CJK) and use the dictionary reading, so `auto` is at
-  least as correct as explicit `ja`. (§5.1)
+- **`--port` rejects values > 65535** — implemented via a `max` bound in
+  `parseNumber` (and the `usize` paddings bounded to `Number.MAX_SAFE_INTEGER`).
+  (§5.3; details under "Closed during the port".)
+- **`auto` uses the Japanese dictionary path** — `auto` now detects Japanese by
+  kana and routes kana-bearing text through the kuromoji + wanakana `ja` path.
+  (§5.1; details under "Closed during the port".)
 
 ### 6b. Optional cosmetic-parity follow-ups (`[cosmetic]` — only if exact parity is wanted)
 
@@ -424,16 +438,35 @@ if byte-level parity with the Rust output is explicitly required.
   to kakasi — byte parity was never required; correct readings were. This is the
   principle applied well: the port ended up *more* correct than a literal copy. See
   §5.1 for the full design and cost.
+- **`--port` ≤ 65535 (clap `u16` range), paddings bounded.** `parseNumber` now
+  takes a `max` argument: `--port` is bounded to `0..=65535` (a TCP port cannot
+  exceed 65535) and the `usize` paddings to `Number.MAX_SAFE_INTEGER` (the
+  practical JS ceiling — `Number` cannot represent the full `usize` range and a
+  line count never needs more). Out-of-range input prints `error: invalid value
+  '<v>' for '<flag>': <v> is not in 0..=<max>` to stderr and exits 2, matching
+  clap's reject contract. Covered by a subprocess test (`main.test.ts`). See §5.3.
+- **`auto` uses the Japanese dictionary path for kana-bearing text.** The Rust
+  original routed `auto` entirely through per-char any-ascii; `auto` now detects
+  Japanese by the presence of kana and routes that text through the kuromoji +
+  wanakana `ja` path, so `auto` is at least as correct as explicit `ja` for the
+  common case (`romanize("食べる","auto") === "taberu"`). Detection keys on **kana**
+  (not all CJK) by design: pure-Han text is ambiguous (Chinese vs. Japanese) and
+  the JA tokenizer has no reading for Chinese-only ideographs, so kanji-only / other
+  CJK stays on the generic path, preserving the prior `auto` behavior for Chinese
+  (`你好` → `"Ni Hao"`). The one residual limitation — kanji-only Japanese with no
+  kana — is documented; use explicit `ja` for that. See §5.1.
 
 ---
 
 **Final status: GREEN** — `typecheck: pass`, `build: pass`,
-`bun test: 98 pass, 0 fail` (10 files, 198 `expect()` calls). The port is
+`bun test: 101 pass, 0 fail` (11 files, 204 `expect()` calls). The port is
 **functionally** identical to the Rust crate and conforms to `PORT_SPEC.md`; byte
 parity was never the goal (see the guiding principle). The Japanese romaji gap is
-now closed via `@patdx/kuromoji` + `wanakana` (§5.1) — including kakasi-style word
+closed via `@patdx/kuromoji` + `wanakana` (§5.1) — including kakasi-style word
 spacing restored through POS-aware token joining, a case where the port ended up
-*more* correct than a literal copy. What remains is two recommended `[improve]`
-items where the Rust original is the more-correct one (`--port` ≤ 65535, and
-`auto` using the JA dictionary path — §6a) plus optional `[cosmetic]` parity
-follow-ups (§6b); none block the build, type-check, or test suite.
+*more* correct than a literal copy. **Both `[improve]` items are now also closed:**
+`--port` enforces clap's `0..=65535` `u16` range (paddings bounded too — §5.3), and
+`--romanize-lang auto` routes kana-bearing Japanese through the dictionary path so
+it is at least as correct as explicit `ja` (§5.1). What remains is purely optional
+`[cosmetic]` parity follow-ups (§6b) and untested runtime surfaces (§6c); none
+block the build, type-check, or test suite.
