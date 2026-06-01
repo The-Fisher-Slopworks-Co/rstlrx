@@ -2,6 +2,7 @@
 
 import { parseArgs } from "node:util";
 
+import { version } from "../package.json";
 import { loadConfig, saveConfig, type Config } from "./config";
 import { LrclibProvider } from "./lyrics/lrclib";
 import type { LyricsProvider } from "./lyrics";
@@ -36,7 +37,8 @@ Options:
       --padding-before <N>      Number of empty lines before the current line
       --padding-after <N>       Number of empty lines after the current line
       --save-config             Save the resulting flag values to the config file as the new defaults
-  -h, --help                    Print help`;
+  -h, --help                    Print help
+  -V, --version                 Print version`;
 
 // A usage error mirrors clap's parse failures: printed to stderr, exit code 2.
 class UsageError extends Error {}
@@ -232,6 +234,11 @@ async function main(): Promise<void> {
 
   if (argv.includes("-h") || argv.includes("--help")) {
     console.log(USAGE);
+    process.exit(0);
+  }
+
+  if (argv.includes("-V") || argv.includes("--version")) {
+    console.log(`rstlrx ${version}`);
     process.exit(0);
   }
 

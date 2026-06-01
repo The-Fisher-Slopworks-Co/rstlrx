@@ -1,6 +1,6 @@
 # rstlrx — Rust → TypeScript/Bun Migration Report
 
-Status: **GREEN** — typecheck pass, build pass, `bun test` 101 pass / 0 fail.
+Status: **GREEN** — typecheck pass, build pass, `bun test` 103 pass / 0 fail.
 
 > **Guiding principle — functional identity over byte-identity.** This port aims
 > for *functional* identity with the Rust crate, not byte-for-byte output. The
@@ -58,7 +58,7 @@ bun run src/main.ts [--style-current bold --color-current "#ff5500" --romanize i
 
 Verification outcome (reproduced during this report): `typecheck` exits 0;
 `build` bundles 28 modules into `dist/main.js` (~1.48 MB); `bun test` reports
-`101 pass, 0 fail` across 11 files (204 `expect()` calls).
+`103 pass, 0 fail` across 11 files (208 `expect()` calls).
 
 ## 2. File mapping (every Rust file → TS file)
 
@@ -113,7 +113,7 @@ constructors translated to the TS data model (`Line{time_ms,words}` →
 `Color::Rgb/Indexed/Red` → structural `{type,...}` objects; `Style::default()` →
 `{bold,italic,underline,dim,fg}`). `assert_eq!` → `toEqual`, `assert!` → `toBe`.
 
-Final result: **`bun test` → 101 pass, 0 fail (11 files, 204 `expect()` calls).**
+Final result: **`bun test` → 103 pass, 0 fail (11 files, 208 `expect()` calls).**
 
 Per-file porting tally:
 
@@ -300,8 +300,12 @@ the technical facts beneath each are unchanged.
    - `--help` / `-h` prints a hand-written usage string (not clap's exact
      auto-generated layout) and exits 0. The wording/spacing is close but not
      byte-identical to clap's output.
-   - **No `--version` flag.** The Rust crate did not derive `version`, so the
-     port also has none — consistent, but neither has it.
+   - **`--version` / `-V` flag (port-only addition).** The Rust crate did not
+     derive `version`, so the original had no such flag. The port adds one: it
+     prints `rstlrx <version>` to stdout and exits 0, with the version sourced
+     from `package.json` (mirroring how clap's `version` derive sources
+     `CARGO_PKG_VERSION`). Honored in any position, like `--help`. `-V` matches
+     clap's auto-derived short for version.
    - `main()` checks `argv.includes("--help" | "-h")` before subcommand
      dispatch, so `--help` is honored in any position and `rstlrx login --help`
      prints the top-level usage rather than login-specific help. clap would emit
@@ -459,7 +463,7 @@ if byte-level parity with the Rust output is explicitly required.
 ---
 
 **Final status: GREEN** — `typecheck: pass`, `build: pass`,
-`bun test: 101 pass, 0 fail` (11 files, 204 `expect()` calls). The port is
+`bun test: 103 pass, 0 fail` (11 files, 208 `expect()` calls). The port is
 **functionally** identical to the Rust crate and conforms to `PORT_SPEC.md`; byte
 parity was never the goal (see the guiding principle). The Japanese romaji gap is
 closed via `@patdx/kuromoji` + `wanakana` (§5.1) — including kakasi-style word

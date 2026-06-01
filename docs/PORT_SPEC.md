@@ -352,6 +352,8 @@ flags (all optional): `--style-before --style-current --style-after --color-befo
 (enum RomanizeLang), `--padding-before --padding-after` (number, clap `usize` →
 bounded `0..=Number.MAX_SAFE_INTEGER`, the JS-representable ceiling). Numeric
 range violations are usage errors (stderr, exit 2). Provide `--help`/`-h` text and exit 0.
+Provide `--version`/`-V` (port-only addition; the Rust crate had none): print `rstlrx
+<version>` (sourced from `package.json`) to stdout and exit 0, honored in any position.
 Merge precedence exactly like `main.rs`: CLI value over stored; booleans are
 `cli || stored`; colors `cli ?? stored`. On `--save-config` print
 `"Saved config to <path>"`. Then load auth, build `SpotifyPlayer` + `LrclibProvider`,
