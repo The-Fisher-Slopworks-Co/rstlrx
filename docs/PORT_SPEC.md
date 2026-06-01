@@ -58,7 +58,7 @@ file paths, and signatures below so the independently-written files compose.
 | `dirs` | `dirs.ts` |
 | `open` | `Bun.spawn` with platform opener |
 | `pinyin` | `pinyin-pro` (`pinyin(text,{toneType:'none',type:'array'})`) |
-| `kakasi` (ja romaji) | `any-ascii` (per-char) — **behavior gap, see below** |
+| `kakasi` (ja romaji) | `@patdx/kuromoji` (IPADIC) + `wanakana` (`toRomaji`, Hepburn) — dictionary kanji→reading + POS-aware word spacing; `any-ascii` is the fallback before the dict loads (see below) |
 | `any_ascii` | `any-ascii` npm (`anyAscii(string)`) |
 | `ratatui`/`crossterm` | raw ANSI + `process.stdin` raw mode (see renderer) |
 
@@ -115,9 +115,18 @@ identical to Rust. Iterate **char by char** (`for (const c of text)` — code po
   `anyAscii(c)`; `prevRomanized = true`.
 - else → push `c` as-is; `prevRomanized = false`.
 
-`ja`/`ko`/`auto` (mirror Rust `romanize_ja`→approx, and `romanize_generic`):
-per char, if `isCjk(c)` → space if `prevRomanized` then `anyAscii(c)`,
-`prevRomanized=true`; else push `c`, `prevRomanized=false`.
+`ja` (faithful to Rust `romanize_ja`/kakasi — dictionary reading + word spacing):
+when the kuromoji tokenizer is loaded (built once by `initRomanizer()`, awaited in
+`main.ts` only for `ja`/`auto`), tokenize the text, take each token's katakana
+`.reading`, and convert it via `wanakana.toRomaji` (Hepburn). Group each
+independent word with the inflections/auxiliaries that attach to it (POS-aware) and
+join groups with a single space; convert each group's katakana run as a whole so a
+sokuon (small っ) at a token boundary survives (`走って`→`"hashitte"`). Tokens with
+no reading (punctuation, latin) keep their surface form. Until the dict loads — and
+for the `ko`/`auto` paths — fall back to per-char `anyAscii`: if `isCjk(c)` → space
+if `prevRomanized` then `anyAscii(c)`, `prevRomanized=true`; else push `c`,
+`prevRomanized=false`. (`romanize(text, lang): string` stays synchronous; only the
+one-time dict load is async.)
 
 DO NOT call `pinyin(wholeString, {type:"array"})` — it splits Latin runs into
 single chars and breaks `test_zh_mixed` ("I love 你" must yield a string starting

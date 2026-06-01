@@ -34,7 +34,7 @@ Legend: **pub** = Rust `pub`; **priv→exp** = private in Rust, promoted to expo
 | `enum RomanizeLang` (Zh/Ja/Ko/Auto) | pub | `type RomanizeLang = "zh"|"ja"|"ko"|"auto"` (default `"auto"`) |
 | `has_romanizable()` | pub | `hasRomanizable(text): boolean` |
 | `romanize()` | pub | `romanize(text, lang): string` |
-| `is_cjk()`, `romanize_ja/_zh/_generic()` | priv | internal helpers; ranges identical; `kakasi`-backed `romanize_ja` becomes per-char `anyAscii` (gap §4) |
+| `is_cjk()`, `romanize_ja/_zh/_generic()` | priv | internal helpers; ranges identical; `kakasi`-backed `romanize_ja` ported to `@patdx/kuromoji` + `wanakana` with POS-aware word spacing (gap §4 — RESOLVED; see MIGRATION_REPORT §5.1) |
 
 ### `src/sync.rs` → `ts/src/sync.ts`
 | Rust item | Vis | TS target |
@@ -181,18 +181,24 @@ to stderr, exit **1**. `--help`/`-h` → text, exit 0.
 | `futures` (0.3, `StreamExt`) | **no dep** — native async iteration / the stdin `Channel` bridge (replaces `EventStream`) |
 | `any_ascii` (0.3.3) | `any-ascii` npm (`anyAscii(string)`; per-char `anyAscii(c)`) |
 | `pinyin` (0.11, `plain`) | `pinyin-pro` — `pinyin(c, { toneType: "none" })` on a **single Han code point only** (never whole string) |
-| `kakasi` (0.1) | `any-ascii` per-char (Japanese romaji) — **behavior gap, see §4** |
+| `kakasi` (0.1) | `@patdx/kuromoji` (IPADIC morphological tokenizer) + `wanakana` (`toRomaji`, Hepburn); kana via wanakana, kanji via dictionary reading, POS-aware word spacing — **gap §4 RESOLVED, see MIGRATION_REPORT §5.1** |
 
 ---
 
 ## 4. Behavior gaps / risks (preliminary)
 
-1. **kakasi → any-ascii (Japanese) — semantic divergence, NOT just "approximation".**
-   kakasi does *dictionary* kanji→reading (`食べる`→`"taberu"`). Per-char `anyAscii` does
-   codepoint transliteration with inter-char spaces (`食`→`"Shi"`, `べ`→`"be"`, `る`→`"ru"` →
-   capitalized, space-separated, semantically wrong Japanese). The Rust `test_ja_*` tests only
-   assert "no kana remains / non-empty", so both implementations pass — the divergence is silent.
-   Spec verifies `anyAscii("食べる")="Shiberu"`.
+1. **kakasi → kuromoji + wanakana (Japanese) — RESOLVED.** This was originally
+   flagged as a semantic divergence: kakasi does *dictionary* kanji→reading
+   (`食べる`→`"taberu"`), whereas the first cut used per-char `anyAscii`
+   (`食べる`→`"Shiberu"`, semantically wrong). It is now closed with a real
+   morphological analyzer — `@patdx/kuromoji` (IPADIC) for kanji→reading +
+   `wanakana.toRomaji` (Hepburn) for kana — plus POS-aware token joining that
+   restores kakasi-style word spacing (`こんにちは世界`→`"konnichiha sekai"`) while
+   keeping inflections glued (`食べました`→`"tabemashita"`). `any-ascii` remains the
+   `ko`/`auto` path and the fallback before the dictionary loads. Output is correct
+   and readable, not byte-identical to kakasi (byte parity was never required). See
+   MIGRATION_REPORT §5.1 for the full design and cost (~17MB dict on disk, ~96MB in
+   RAM, lazy-loaded only for `ja`/`auto`).
 
 2. **pinyin crate → pinyin-pro drift.** Polyphonic Han chars may map to different readings between
    the two libs. Tests are loose (no Han char remains + a space is present), so drift is not caught.

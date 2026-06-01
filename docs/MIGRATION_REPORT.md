@@ -1,6 +1,6 @@
 # rstlrx — Rust → TypeScript/Bun Migration Report
 
-Status: **GREEN** — typecheck pass, build pass, `bun test` 101 pass / 0 fail.
+Status: **GREEN** — typecheck pass, build pass, `bun test` 98 pass / 0 fail.
 
 ## 1. Overview
 
@@ -43,8 +43,8 @@ bun run src/main.ts [--style-current bold --color-current "#ff5500" --romanize i
 ```
 
 Verification outcome (reproduced during this report): `typecheck` exits 0;
-`build` bundles 28 modules into `dist/main.js` (~1.47 MB); `bun test` reports
-`101 pass, 0 fail` across 10 files (204 `expect()` calls).
+`build` bundles 28 modules into `dist/main.js` (~1.48 MB); `bun test` reports
+`98 pass, 0 fail` across 10 files (198 `expect()` calls).
 
 ## 2. File mapping (every Rust file → TS file)
 
@@ -99,7 +99,7 @@ constructors translated to the TS data model (`Line{time_ms,words}` →
 `Color::Rgb/Indexed/Red` → structural `{type,...}` objects; `Style::default()` →
 `{bold,italic,underline,dim,fg}`). `assert_eq!` → `toEqual`, `assert!` → `toBe`.
 
-Final result: **`bun test` → 101 pass, 0 fail (10 files, 204 `expect()` calls).**
+Final result: **`bun test` → 98 pass, 0 fail (10 files, 198 `expect()` calls).**
 
 Per-file porting tally:
 
@@ -110,16 +110,16 @@ Per-file porting tally:
 | `src/player/spotify/index.test.ts` | 6 | ported from `player/spotify/mod.rs` (6) |
 | `src/renderer/tui/index.test.ts` | 7 | ported from `renderer/tui/mod.rs` (7) |
 | `src/renderer/tui/style.test.ts` | 16 | ported from `renderer/tui/style.rs` (16) |
-| `src/romanize.test.ts` | 23 | 15 ported from `romanize.rs` (15) + 8 new (kuromoji exact-value + POS-aware word spacing) |
+| `src/romanize.test.ts` | 22 | 15 ported from `romanize.rs` (15) + 7 new (kuromoji exact-value + POS-aware word spacing) |
 | `src/sync.test.ts` | 12 | ported from `sync.rs` (12) |
 | `src/config.test.ts` | 6 | **new** (Rust `config.rs` had no `#[test]`) |
 | `src/channel.test.ts` | 14 | **new infra** |
 | `src/sync.integration.test.ts` | 1 | **new — async select-loop coverage** |
 
-So 70 tests are direct 1:1 ports of the Rust suite, and 29 are new TypeScript
-tests (6 for `config`, 14 for `channel`, 1 sync integration, 8 for the
+So 70 tests are direct 1:1 ports of the Rust suite, and 28 are new TypeScript
+tests (6 for `config`, 14 for `channel`, 1 sync integration, 7 for the
 dictionary-based Japanese romanizer — 2 exact `taberu` / `arigatou` values plus
-6 locking in POS-aware word spacing: multi-word spacing, no inflection
+5 locking in POS-aware word spacing: multi-word spacing, no inflection
 over-segmentation, sokuon at token boundaries, sentence spacing, latin mixed).
 
 ### Why the new channel + sync integration tests
@@ -190,11 +190,16 @@ ported tests, because the Rust tests assert loose properties).
      inflections (`食べました` → `"tabe mashi ta"`). The romanizer instead walks the
      tokens and **groups each independent word with the inflections / auxiliaries
      that attach to it**, joining groups with a single space. A token attaches
-     (takes no leading space) when its `pos` is `助動詞` (auxiliary verb) or `記号`
-     (symbol/punctuation), or its `pos_detail_1` is `非自立` (non-independent),
-     `接尾` (suffix), or `接続助詞` (conjunctive particle); everything else —
-     nouns 名詞, verb stems 動詞, adjectives, adverbs, regular particles 助詞 —
-     starts a new word. This restores kakasi-style readability:
+     (takes no leading space) when its `pos_detail_1` is `非自立` (non-independent),
+     `接尾` (suffix), or `接続助詞` (conjunctive particle, e.g. the て in 走って);
+     when it is non-whitespace punctuation (`記号` other than `空白` — `！` `。` `、`
+     glue to the preceding word); or when it is an auxiliary verb (`助動詞`)
+     **following** a verb / adjective / auxiliary, so an inflection chain like
+     まし+た stays glued while the copula です/だ after a noun is spaced
+     (`学生です` → `"gakusei desu"`). Whitespace (`記号`/`空白`) is a hard
+     separator. Everything else — nouns 名詞, verb stems 動詞, adjectives, adverbs,
+     regular particles は/が/を — starts a new word. This restores kakasi-style
+     readability:
      `こんにちは世界` → `"konnichiha sekai"`, `私は学生です。` →
      `"watashi ha gakusei desu."`, while keeping `食べました` → `"tabemashita"`,
      `食べている` → `"tabeteiru"`, `愛してる` → `"aishiteru"` as single words.
@@ -358,7 +363,7 @@ ported tests, because the Rust tests assert loose properties).
 ---
 
 **Final status: GREEN** — `typecheck: pass`, `build: pass`,
-`bun test: 101 pass, 0 fail` (10 files, 204 `expect()` calls). The port is
+`bun test: 98 pass, 0 fail` (10 files, 198 `expect()` calls). The port is
 functionally complete and conforms to `PORT_SPEC.md`; the Japanese romaji gap is
 now closed via `@patdx/kuromoji` + `wanakana` (§5.1) — including kakasi-style
 word spacing restored through POS-aware token joining — and the remaining items
