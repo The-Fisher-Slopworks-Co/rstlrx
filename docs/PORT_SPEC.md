@@ -14,6 +14,37 @@ file paths, and signatures below so the independently-written files compose.
   source file and its `*.test.ts`. Do NOT edit `package.json`, `tsconfig.json`,
   this spec, or other modules' files.
 
+## Guiding principle: functional identity over byte-identity
+
+The goal of this port is **functional identity** with the Rust crate — **not**
+byte-for-byte reproduction of its output. The test to apply to any divergence is:
+**does anything actually depend on these exact bytes?** That splits every
+difference into three buckets:
+
+1. **Load-bearing bytes → preserve exactly.** Where a real consumer depends on the
+   bytes, they are part of the functional contract and MUST match Rust: the
+   `parseLrc` / `parseLrcLine` timestamp algorithm output, the asserted error
+   strings (`"lrclib: no lyrics found"`, `"spotify: <status>"`, …), the Spotify
+   wire interfaces' snake_case field names, the on-disk `config.toml` /
+   `spotify-auth.json` keys, the OAuth scope / redirect URI / success HTML, and the
+   user-visible stdout lines. "Verbatim where present" below means *these* — kept
+   because they are load-bearing, not because byte-identity is valued for its own
+   sake.
+2. **Cosmetic bytes → functional equivalence is enough.** Where nothing depends on
+   the exact bytes (only the behavior), an equivalent result is fine and is **not**
+   a defect: clap's help-text layout, anyhow's `Caused by:` whitespace/indentation,
+   `smol-toml`'s key ordering / quoting versus `toml::to_string_pretty`. These may
+   differ from Rust as long as they parse / read equivalently.
+3. **If it can be done *more correctly*, do it — better than copying.** A faithful
+   port is **not** obliged to reproduce a *limitation* of the original. Where the TS
+   implementation can be more correct, prefer correctness over imitation. The
+   Japanese romanizer is the exemplar: it uses real dictionary readings
+   (`@patdx/kuromoji` + `wanakana`) and is intentionally **not** byte-identical to
+   kakasi — correct readings and readability were the requirement, byte parity never
+   was. (The inverse also holds: where the Rust original is the *more* correct one —
+   e.g. clap rejecting a `--port` above 65535 — matching it is doing it right, not an
+   optional nicety.)
+
 ## Error & Option mapping (anyhow `Result` / `Option`)
 
 - Rust `fn -> Result<T>`  →  TS `function(): T` (sync) or `Promise<T>` (async)
@@ -26,6 +57,8 @@ file paths, and signatures below so the independently-written files compose.
 - Error message text must match the Rust strings verbatim where present
   (e.g. `"lrclib: no lyrics found"`, `"spotify: <status>"`,
   `"spotify queue: <status>"`, `"cannot read <path>. Run \`rstlrx login\` first."`).
+  These are **load-bearing** (bucket 1 above): tests assert them and users/scripts
+  read them, so they are part of the functional contract — not merely cosmetic.
 
 ## File mapping (Rust → TS). Module boundaries are 1:1.
 

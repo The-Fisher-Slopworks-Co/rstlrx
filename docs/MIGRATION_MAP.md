@@ -5,6 +5,13 @@ Conventions: `Result<T>` → throws on error; `Result<Option<T>>` → `T | null`
 `Option<T>` → `T | null`; anyhow `.context` → `new Error(msg, { cause })`. Error strings verbatim.
 Imports extensionless. snake_case kept ONLY for on-disk TOML/JSON keys (config + spotify-auth).
 
+**Guiding principle:** the target is *functional* identity, not byte-identity. Bytes
+something depends on are preserved (`[load-bearing]`); cosmetic formatting nothing
+depends on only needs to be equivalent (`[cosmetic]`); and where the port can be
+*more correct* than Rust, correctness wins (`[improve]`). "Error strings verbatim"
+above is a `[load-bearing]` case (tests + users depend on them), not byte-worship.
+Canonical statement: [`PORT_SPEC.md` → "Guiding principle"](./PORT_SPEC.md).
+
 ---
 
 ## 1. Public API inventory (per Rust module → TS target)
@@ -187,7 +194,11 @@ to stderr, exit **1**. `--help`/`-h` → text, exit 0.
 
 ## 4. Behavior gaps / risks (preliminary)
 
-1. **kakasi → kuromoji + wanakana (Japanese) — RESOLVED.** This was originally
+Tagged by the guiding principle: `[load-bearing]` (preserve), `[cosmetic]`
+(equivalent is enough — not a defect), `[improve]` (Rust is more correct; match it).
+See MIGRATION_REPORT §5/§6 for the per-item detail and the recommended improvements.
+
+1. `[improve ✓]` **kakasi → kuromoji + wanakana (Japanese) — RESOLVED.** This was originally
    flagged as a semantic divergence: kakasi does *dictionary* kanji→reading
    (`食べる`→`"taberu"`), whereas the first cut used per-char `anyAscii`
    (`食べる`→`"Shiberu"`, semantically wrong). It is now closed with a real
@@ -200,41 +211,42 @@ to stderr, exit **1**. `--help`/`-h` → text, exit 0.
    MIGRATION_REPORT §5.1 for the full design and cost (~17MB dict on disk, ~96MB in
    RAM, lazy-loaded only for `ja`/`auto`).
 
-2. **pinyin crate → pinyin-pro drift.** Polyphonic Han chars may map to different readings between
+2. `[cosmetic]` **pinyin crate → pinyin-pro drift.** Polyphonic Han chars may map to different readings between
    the two libs. Tests are loose (no Han char remains + a space is present), so drift is not caught.
    MUST call `pinyin()` per single Han code point only — whole-string `{type:"array"}` splits Latin
    runs and breaks `test_zh_mixed` (`"I love 你"` must start with `"I love "`).
 
-3. **CJK double-width centering (silent runtime gap).** ratatui centers `Paragraph` by *display
+3. `[cosmetic]` **CJK double-width centering (silent runtime gap).** ratatui centers `Paragraph` by *display
    width* (CJK glyphs = 2 cells). Naive `string.length`-based centering mis-centers exactly the
    CJK content this tool targets. Not covered by tests (they inspect `.text` only).
 
-4. **ratatui → raw ANSI.** `Style`/`Color` become plain data; `styleToAnsi` named-color codes are
+4. `[cosmetic]` **ratatui → raw ANSI.** `Style`/`Color` become plain data; `styleToAnsi` named-color codes are
    best-effort and explicitly *not asserted* by tests. The full draw/layout/alt-screen path is hand-
    rolled and untested; risk of escape-sequence / restore-on-panic differences.
 
-5. **clap → parseArgs nuances.** Must hand-implement: `--help`/`-h` text + exit 0; usage errors
+5. `[cosmetic]` + `[improve]` **clap → parseArgs nuances.** Must hand-implement: `--help`/`-h` text + exit 0; usage errors
    (unknown flag, invalid enum value, missing required `login` arg) → stderr + exit **2**; enum value
    validation (`romanize`, `romanize-lang`); `u16`/`usize` numeric parsing & range. `parseArgs` does
-   none of this for free.
+   none of this for free. Help/error wording is `[cosmetic]`; the `u16`/`usize` range is `[improve]` —
+   `--port` must reject values > 65535 (a port can't exceed it), so match clap (MIGRATION_REPORT §6a).
 
-6. **anyhow error-chain formatting.** Top-level must print `Error: <message>` then `Caused by:`
+6. `[cosmetic]` **anyhow error-chain formatting.** Top-level must print `Error: <message>` then `Caused by:`
    lines walking the `{ cause }` chain, to stderr, exit 1 — mirroring anyhow's `{:?}` Debug output.
 
-7. **dirs platform mapping.** linux `configDir`=`$XDG_CONFIG_HOME` (if absolute) else `~/.config`,
+7. `[load-bearing]` **dirs platform mapping.** linux `configDir`=`$XDG_CONFIG_HOME` (if absolute) else `~/.config`,
    `dataLocalDir`=`$XDG_DATA_HOME` (if absolute) else `~/.local/share`; darwin both =
    `~/Library/Application Support`; win32 `configDir`=`%APPDATA%`, `dataLocalDir`=`%LOCALAPPDATA%`.
    Return `null` if home/env unavailable (Rust returns `None` → spec throws downstream).
 
-8. **Channel orphaned-recv trap (#1 porting bug).** `tokio::select!` + `mpsc` → FIFO resolver-queue
+8. `[load-bearing]` **Channel orphaned-recv trap (#1 porting bug).** `tokio::select!` + `mpsc` → FIFO resolver-queue
    `Channel`. Select loops MUST hold the `recv()` promise across race iterations and renew it ONLY
    after it resolves; recreating `recv()` each iteration registers multiple waiters and FIFO `send`
    resolves the oldest (orphaned) one, dropping messages. Affects `sync_loop` and `tui::run`.
 
-9. **`Mutex<SpotifyAuth>` removed.** Rust serializes token refresh via `tokio::Mutex`; single-
+9. `[cosmetic]` **`Mutex<SpotifyAuth>` removed.** Rust serializes token refresh via `tokio::Mutex`; single-
    threaded await in TS makes it unnecessary, but concurrent `state()`/`queue()` could each trigger a
    refresh + `save()`. Acceptable (token fetched per request) but a behavioral nuance to note.
 
-10. **TOML serialization shape.** `toml::to_string_pretty` vs `smol-toml` `stringify` formatting may
+10. `[load-bearing]` keys + `[cosmetic]` formatting **TOML serialization shape.** `toml::to_string_pretty` vs `smol-toml` `stringify` formatting may
     differ (key ordering, quoting); on-disk `config.toml` is round-trip-compatible but not necessarily
     byte-identical. `skip_serializing_if = Option::is_none` → OMIT null/undefined `color_*` keys.

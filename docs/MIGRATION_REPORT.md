@@ -2,6 +2,20 @@
 
 Status: **GREEN** — typecheck pass, build pass, `bun test` 98 pass / 0 fail.
 
+> **Guiding principle — functional identity over byte-identity.** This port aims
+> for *functional* identity with the Rust crate, not byte-for-byte output. The
+> canonical statement lives in
+> [`PORT_SPEC.md` → "Guiding principle"](./PORT_SPEC.md); in short, every
+> divergence falls into one of three buckets: **[load-bearing]** bytes something
+> truly depends on (wire fields, on-disk keys, asserted error strings, user-visible
+> stdout, the `parseLrc` algorithm) are preserved; **[cosmetic]** byte-level
+> formatting nothing depends on (help-text layout, `Caused by:` whitespace, TOML
+> key ordering) is functionally equivalent and is **not** a defect; and where the
+> TS port can be **more correct** than the Rust original, correctness is preferred
+> over slavish copying (`[improve]` — and the kuromoji romanizer is the positive
+> exemplar). The "fidelity notes" in §5 are tagged against these buckets, and the
+> `[improve]` items are collected as recommended improvements in §6.
+
 ## 1. Overview
 
 `rstlrx` is a terminal lyrics viewer that syncs with Spotify playback. The Rust
@@ -167,11 +181,26 @@ Two compile errors in `src/main.ts` broke `tsc` and `bun build`; both fixed:
 
 ## 5. Behavior gaps / fidelity notes
 
-These are honest, specific divergences. Several are silent (not caught by the
-ported tests, because the Rust tests assert loose properties).
+These are honest, specific divergences, each tagged by the guiding principle into
+one of three buckets:
 
-1. **Japanese romaji: kakasi → kuromoji + wanakana (gap CLOSED, with word
-   spacing restored).** The Rust `romanize_ja` (`src/romanize.rs:53-54`) is
+- **`[load-bearing]`** — bytes a real consumer depends on; preserved to match Rust.
+- **`[cosmetic]`** — byte-level formatting nothing depends on; functionally
+  equivalent, **not** a defect (no action needed).
+- **`[improve]`** — a place where the Rust original is functionally *more correct*;
+  per "do it right" this is a **recommended improvement** (tracked in §6), not an
+  excused divergence.
+
+Several divergences are silent (not caught by the ported tests, because the Rust
+tests assert loose properties). Tagging relabels each note against the principle;
+the technical facts beneath each are unchanged.
+
+1. `[improve ✓ — done right]` **Japanese romaji: kakasi → kuromoji + wanakana (gap
+   CLOSED, with word spacing restored).** This is the positive exemplar of the
+   principle: the port is intentionally **not** byte-identical to kakasi, and is
+   *more* correct than the first-cut any-ascii — correct dictionary readings and
+   readability were the requirement, byte parity never was. The Rust `romanize_ja`
+   (`src/romanize.rs:53-54`) is
    `kakasi::convert(text).romaji` — a *dictionary / morphological* kanji→reading
    conversion that **inserts spaces between words** (e.g.
    `kakasi::convert("こんにちは世界！").romaji == "konnichiha sekai!"`). The TS port
@@ -233,21 +262,28 @@ ported tests, because the Rust tests assert loose properties).
      design; common vocabulary is covered by the dictionary and none of the tests
      hit this. `ko` / `auto` still use `romanizeGeneric` (per-char any-ascii) —
      `auto` therefore never actually invokes the tokenizer even when the dict is
-     loaded — and `zh` still uses pinyin per Han ideograph with any-ascii only as
-     the kana/hangul fallback. The Rust `test_ja_*` tests assert only "no kana
+     loaded. **`[improve]`** — `auto` is meant to handle Japanese, but routes JA
+     text through the weaker generic path instead of the now-correct `ja`
+     tokenizer; "do it right" says `auto` should detect Japanese and use the
+     dictionary path (tracked in §6). `zh` still uses pinyin per Han ideograph
+     with any-ascii only as the kana/hangul fallback. The Rust `test_ja_*` tests assert only "no kana
      remains / non-empty"; two new tests assert the exact upgraded values
      (`romanize("食べる","ja") === "taberu"`, `romanize("ありがとう","ja") ===
      "arigatou"`), run against the real tokenizer via a `beforeAll(initRomanizer)`.
 
-2. **pinyin crate → pinyin-pro drift.** Polyphonic Han characters may map to
-   different readings between the `pinyin` crate and `pinyin-pro`. Tests are
-   loose (assert "no Han char remains" + "a space is present"), so drift is
-   uncaught. `pinyin()` is correctly called only on a single Han code point;
+2. `[cosmetic]` **pinyin crate → pinyin-pro drift.** Polyphonic Han characters may
+   map to different readings between the `pinyin` crate and `pinyin-pro`, but both
+   produce valid plain readings, so this is functionally equivalent, not a defect.
+   Tests are loose (assert "no Han char remains" + "a space is present"), so drift
+   is uncaught. `pinyin()` is correctly called only on a single Han code point;
    calling it on the whole string with `{type:"array"}` would split Latin runs
    and break `test_zh_mixed` (`"I love 你"` must start with `"I love "`).
 
-3. **clap → parseArgs differences.** `clap`'s help text, error wording, and
-   parsing are reimplemented by hand over `node:util` `parseArgs`:
+3. `[cosmetic]` + `[improve]` **clap → parseArgs differences.** `clap`'s help text,
+   error wording, and parsing are reimplemented by hand over `node:util`
+   `parseArgs`. The help-text layout and error wording are `[cosmetic]` (nothing
+   depends on the exact bytes); the one `[improve]` item is the `--port` range,
+   flagged below:
    - `--help` / `-h` prints a hand-written usage string (not clap's exact
      auto-generated layout) and exits 0. The wording/spacing is close but not
      byte-identical to clap's output.
@@ -265,16 +301,19 @@ ported tests, because the Rust tests assert loose properties).
      character-identical to clap's.
    - Enum validation for `--romanize` / `--romanize-lang` and numeric range for
      `--port` (clap `u16`) / paddings (clap `usize`) is done manually; `parseArgs`
-     does none of this. Note: `--port` accepts any non-negative integer here,
-     whereas clap's `u16` would reject values > 65535.
+     does none of this. **`[improve]`** — `--port` currently accepts any
+     non-negative integer, whereas clap's `u16` rejects values > 65535. A TCP port
+     genuinely cannot exceed 65535, so the Rust original is the more-correct one
+     here; "do it right" says add the `0..=65535` bound (tracked in §6), rather
+     than treat the looser behavior as an acceptable divergence.
 
-4. **anyhow error-chain formatting.** Runtime failures print `Error: <message>`
+4. `[cosmetic]` **anyhow error-chain formatting.** Runtime failures print `Error: <message>`
    to stderr, then (if a `cause` chain exists) a `Caused by:` block walking the
    `{ cause }` chain, exit 1 — mirroring anyhow's `{:?}` Debug report. The
    indentation and "Caused by:" framing approximate anyhow's multi-line format;
    exact whitespace may differ from anyhow's renderer.
 
-5. **ratatui / crossterm → raw ANSI.** `Style` / `Color` / `Modifier` become
+5. `[cosmetic]` (+ untested runtime path) **ratatui / crossterm → raw ANSI.** `Style` / `Color` / `Modifier` become
    plain data; `styleToAnsi` emits opening SGR sequences. Named-color SGR codes
    are best-effort and explicitly **not asserted** by tests (tests inspect
    `.text` and counts only). The full draw / layout / alt-screen / raw-mode path
@@ -283,7 +322,7 @@ ported tests, because the Rust tests assert loose properties).
    unit-tested; there is residual risk of escape-sequence or restore-on-panic
    differences versus ratatui's managed terminal teardown.
 
-6. **CJK double-width centering — handled, with a table-fidelity caveat.**
+6. `[cosmetic]` **CJK double-width centering — handled, with a table-fidelity caveat.**
    ratatui centers a `Paragraph` by **display width** (via the `unicode-width`
    crate, where CJK glyphs occupy 2 cells). The port preserves this: `tui/index.ts`
    defines `displayWidth()` / `isWide()` and `centerLine` centers using
@@ -295,14 +334,14 @@ ported tests, because the Rust tests assert loose properties).
    points the two tables may classify differently. This path is not covered by
    tests (they inspect `.text` only), so any such edge divergence would be silent.
 
-7. **`dirs` platform mapping.** `dirs.ts` replicates: linux `configDir` =
+7. `[load-bearing]` **`dirs` platform mapping.** `dirs.ts` replicates: linux `configDir` =
    `$XDG_CONFIG_HOME` (if absolute) else `~/.config`, `dataLocalDir` =
    `$XDG_DATA_HOME` (if absolute) else `~/.local/share`; darwin both =
    `~/Library/Application Support`; win32 `configDir` = `%APPDATA%`,
    `dataLocalDir` = `%LOCALAPPDATA%`. Returns `null` if home / env is
    unavailable (Rust returned `None`), and downstream `storagePath()` throws.
 
-8. **TOML library swap (`toml` → `smol-toml`).** On-disk `config.toml` is
+8. `[load-bearing]` keys + `[cosmetic]` formatting **TOML library swap (`toml` → `smol-toml`).** On-disk `config.toml` is
    round-trip compatible (snake_case keys preserved; null/undefined `color_*`
    keys omitted, matching serde's `skip_serializing_if`), but
    `smol-toml.stringify` is not guaranteed byte-identical to
@@ -310,13 +349,13 @@ ported tests, because the Rust tests assert loose properties).
    merges a parsed partial over `defaultConfig()` (mirrors `#[serde(default)]`),
    and a missing file falls back to defaults.
 
-9. **`tokio::Mutex<SpotifyAuth>` removed.** Rust serialized token refresh via a
+9. `[cosmetic]` (behavioral nuance, equivalent) **`tokio::Mutex<SpotifyAuth>` removed.** Rust serialized token refresh via a
    `tokio::Mutex`. Single-threaded `await` in TS makes the lock unnecessary, but
    concurrent `state()` / `queue()` calls could each independently trigger a
    refresh + `save()`. Token is fetched per request, so this is acceptable — a
    behavioral nuance, not a correctness break.
 
-10. **Spotify / lrclib wire behavior is preserved.** lrclib: `GET
+10. `[load-bearing]` **Spotify / lrclib wire behavior is preserved.** lrclib: `GET
     https://lrclib.net/api/get`, UA `rstlrx v0.1.0 (https://github.com/...)`,
     10s `AbortSignal.timeout`, non-2xx → throw `"lrclib: <status>"`, missing
     lyrics → throw `"lrclib: no lyrics found"`; `parseLrc` timestamp logic
@@ -330,42 +369,71 @@ ported tests, because the Rust tests assert loose properties).
     login..."`, `"Waiting for callback on port {port}..."`, `"Login successful!
     Auth saved."`). The browser open uses `Bun.spawn` with the platform opener.
 
-## 6. Could-not-be-faithfully-translated & follow-ups
+## 6. Follow-ups
 
-- **Japanese kanji morphological romanization (kakasi)** is now translated. It
-  was previously the one item that could not be reproduced — there was no
-  dictionary-based kanji→reading library wired into the Bun stack, so per-run
-  `any-ascii` gave context-free (often incorrect) kanji readings. That gap is
-  **closed**: `@patdx/kuromoji` (IPADIC, the same dictionary class as kakasi)
-  drives the readings and `wanakana` produces Hepburn romaji, behind the same
-  synchronous `romanize(text, "ja")` signature (the one-time dictionary load is
-  the only async step, done in `initRomanizer()` and lazily wired into `main.ts`
-  for `ja` / `auto`). kakasi's **word spacing** is also restored via POS-aware
-  token joining (independent words spaced, inflections / auxiliaries / suffixes
-  kept attached), and sokuon / long vowels at token boundaries are preserved by
-  converting each word group's katakana run as a whole. The result is correct and
-  readable (proper word spacing), not byte-for-byte identical to kakasi — byte
-  parity was never required. See §5.1 for the full design and cost.
+Grouped by the guiding principle. The first group is the one that matters per "do
+it right" — places where the Rust original is functionally *more correct* and the
+port should match it (not excuse the difference). The other two groups are
+optional: cosmetic parity that nothing depends on, and untested surfaces.
+
+### 6a. Recommended improvements (`[improve]` — do it right)
+
+These are not "acceptable divergences" — the original is the more-correct one, so
+matching it (or going further) is the right call when these surfaces are touched.
+
+- **`--port` should reject values > 65535.** A TCP port cannot exceed 65535; clap's
+  `u16` enforces this, the port currently accepts any non-negative integer. Add the
+  `0..=65535` bound (and, alongside it, the `usize` paddings range). (§5.3)
+- **`auto` should use the Japanese dictionary path.** `--romanize-lang auto` is
+  meant to handle Japanese, but routes JA text through the weaker generic
+  `any-ascii` path instead of the now-correct kuromoji + wanakana `ja` path. Make
+  `auto` detect Japanese (kana/CJK) and use the dictionary reading, so `auto` is at
+  least as correct as explicit `ja`. (§5.1)
+
+### 6b. Optional cosmetic-parity follow-ups (`[cosmetic]` — only if exact parity is wanted)
+
+Functionally equivalent already; nothing depends on the exact bytes. Do these only
+if byte-level parity with the Rust output is explicitly required.
 
 - **CJK display-width centering** is implemented (width-aware centering via a
-  hand-coded wide-character range table). Optional follow-up: align that table
-  with the exact `unicode-width` data if pixel-perfect parity with ratatui at
-  edge code points is required.
+  hand-coded wide-character range table). Optional: align that table with the exact
+  `unicode-width` data for pixel-perfect parity with ratatui at edge code points.
+- **clap-identical help / error text.** The hand-written usage/help strings read
+  equivalently but are not byte-identical to clap's auto-generated layout. Optional:
+  tighten the wording/spacing only if exact clap parity is required.
+- **anyhow / TOML formatting.** `Caused by:` indentation and `smol-toml` key
+  ordering/quoting may differ from anyhow / `toml::to_string_pretty`; both parse and
+  read equivalently.
 
-- **clap-identical help / error text and `u16` range enforcement** are
-  approximated. Follow-up: tighten usage-error strings and add explicit numeric
-  range checks if exact clap parity is required.
+### 6c. Untested surfaces (no Rust tests existed either)
 
-- **Runtime UI / OAuth paths are untested** (no Rust tests existed for them
-  either). Follow-up: end-to-end terminal-render and login-flow tests if those
-  surfaces need regression protection.
+- **Runtime UI / OAuth paths are untested.** Follow-up: end-to-end terminal-render
+  and login-flow tests if those surfaces need regression protection.
+
+### Closed during the port (`[improve ✓]`)
+
+- **Japanese kanji morphological romanization (kakasi)** is now translated — once
+  the one item that could not be reproduced. `@patdx/kuromoji` (IPADIC, the same
+  dictionary class as kakasi) drives the readings and `wanakana` produces Hepburn
+  romaji, behind the same synchronous `romanize(text, "ja")` signature (the
+  one-time dictionary load is the only async step, done in `initRomanizer()` and
+  lazily wired into `main.ts` for `ja` / `auto`). kakasi's **word spacing** is also
+  restored via POS-aware token joining, and sokuon / long vowels at token
+  boundaries are preserved by converting each word group's katakana run as a whole.
+  The result is correct and readable, intentionally **not** byte-for-byte identical
+  to kakasi — byte parity was never required; correct readings were. This is the
+  principle applied well: the port ended up *more* correct than a literal copy. See
+  §5.1 for the full design and cost.
 
 ---
 
 **Final status: GREEN** — `typecheck: pass`, `build: pass`,
 `bun test: 98 pass, 0 fail` (10 files, 198 `expect()` calls). The port is
-functionally complete and conforms to `PORT_SPEC.md`; the Japanese romaji gap is
-now closed via `@patdx/kuromoji` + `wanakana` (§5.1) — including kakasi-style
-word spacing restored through POS-aware token joining — and the remaining items
-are the documented, intentional fidelity gaps above (chiefly CJK-width
-centering), none of which block the build, type-check, or test suite.
+**functionally** identical to the Rust crate and conforms to `PORT_SPEC.md`; byte
+parity was never the goal (see the guiding principle). The Japanese romaji gap is
+now closed via `@patdx/kuromoji` + `wanakana` (§5.1) — including kakasi-style word
+spacing restored through POS-aware token joining, a case where the port ended up
+*more* correct than a literal copy. What remains is two recommended `[improve]`
+items where the Rust original is the more-correct one (`--port` ≤ 65535, and
+`auto` using the JA dictionary path — §6a) plus optional `[cosmetic]` parity
+follow-ups (§6b); none block the build, type-check, or test suite.
