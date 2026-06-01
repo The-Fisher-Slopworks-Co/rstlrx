@@ -156,10 +156,19 @@ independent word with the inflections/auxiliaries that attach to it (POS-aware) 
 join groups with a single space; convert each group's katakana run as a whole so a
 sokuon (small っ) at a token boundary survives (`走って`→`"hashitte"`). Tokens with
 no reading (punctuation, latin) keep their surface form. Until the dict loads — and
-for the `ko`/`auto` paths — fall back to per-char `anyAscii`: if `isCjk(c)` → space
+for the `ko` path — fall back to per-char `anyAscii`: if `isCjk(c)` → space
 if `prevRomanized` then `anyAscii(c)`, `prevRomanized=true`; else push `c`,
 `prevRomanized=false`. (`romanize(text, lang): string` stays synchronous; only the
 one-time dict load is async.)
+
+`auto` (`[improve]` over Rust, which routed all of `auto` through
+`romanize_generic`): detect Japanese by the presence of **kana** (hiragana
+3040-309F / katakana 30A0-30FF). Kana-bearing text takes the `ja` dictionary path
+above, so `auto` is at least as correct as explicit `ja` for the common case;
+kanji-only / other CJK — ambiguous Chinese-vs-Japanese, and outside the JA
+dictionary (it has no reading for Chinese-only ideographs) — stays on the per-char
+`anyAscii` generic path, preserving the prior `auto` behavior for Chinese
+(`你好`→`"Ni Hao"`).
 
 DO NOT call `pinyin(wholeString, {type:"array"})` — it splits Latin runs into
 single chars and breaks `test_zh_mixed` ("I love 你" must yield a string starting
@@ -335,12 +344,14 @@ lines with `timeMs: 0`; else throw `"lrclib: no lyrics found"`.
 ## main.ts (CLI)
 
 Use `parseArgs` from `node:util`. Subcommand: if `argv[0] === "login"` parse
-`--client-id` (required), `--client-secret` (required), `--port` (default `8888`)
-→ `SpotifyAuth.loginFlow`. Otherwise top-level flags (all optional):
-`--style-before --style-current --style-after --color-before --color-current
---color-after` (string), `--ignore-errors --merge-queue --save-config` (boolean),
-`--romanize` (enum RomanizeMode), `--romanize-lang` (enum RomanizeLang),
-`--padding-before --padding-after` (number). Provide `--help`/`-h` text and exit 0.
+`--client-id` (required), `--client-secret` (required), `--port` (default `8888`,
+clap `u16` → bounded `0..=65535`) → `SpotifyAuth.loginFlow`. Otherwise top-level
+flags (all optional): `--style-before --style-current --style-after --color-before
+--color-current --color-after` (string), `--ignore-errors --merge-queue
+--save-config` (boolean), `--romanize` (enum RomanizeMode), `--romanize-lang`
+(enum RomanizeLang), `--padding-before --padding-after` (number, clap `usize` →
+bounded `0..=Number.MAX_SAFE_INTEGER`, the JS-representable ceiling). Numeric
+range violations are usage errors (stderr, exit 2). Provide `--help`/`-h` text and exit 0.
 Merge precedence exactly like `main.rs`: CLI value over stored; booleans are
 `cli || stored`; colors `cli ?? stored`. On `--save-config` print
 `"Saved config to <path>"`. Then load auth, build `SpotifyPlayer` + `LrclibProvider`,

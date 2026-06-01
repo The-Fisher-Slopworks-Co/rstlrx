@@ -13,8 +13,8 @@ Status: **GREEN** — typecheck pass, build pass, `bun test` 101 pass / 0 fail.
 > key ordering) is functionally equivalent and is **not** a defect; and where the
 > TS port can be **more correct** than the Rust original, correctness is preferred
 > over slavish copying (`[improve]` — and the kuromoji romanizer is the positive
-> exemplar). The "fidelity notes" in §5 are tagged against these buckets, and the
-> `[improve]` items are collected as recommended improvements in §6.
+> exemplar). The "fidelity notes" in §5 are tagged against these buckets; the
+> `[improve]` items have now all been closed (see §6 → "Closed during the port").
 
 ## 1. Overview
 
